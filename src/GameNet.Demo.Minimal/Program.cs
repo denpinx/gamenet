@@ -61,8 +61,12 @@ static async Task RunClientAsync(string host, int port)
 
     var players = client.EntitiesFor("players");
     Console.WriteLine($"subscribed collection 'players': {players?.Count ?? 0} entity/entities");
-    if (players is not null && players.TryGetValue(id, out var me))
-        Console.WriteLine($"my entity: id={me.Id} x={me.X} y={me.Y} kind={me.Kind}");
+    if (players is not null && players.TryGetValue(id, out var state))
+    {
+        var name = await client.Group("hello").Call<string>("nameOf", id); // names are not in EntityState
+        var me = Player.FromState(state, name);
+        Console.WriteLine($"my player: id={me.Id} name={me.Name} pos=({me.X},{me.Y})");
+    }
 }
 
 /// <summary>The whole server: one transport, one collection, one RPC group.</summary>
@@ -70,7 +74,6 @@ public sealed class MinimalServer : IDisposable
 {
     private readonly UdpServerTransport _transport;
     private readonly GameServer _server;
-
 
     public MinimalServer(int port)
     {
@@ -96,10 +99,23 @@ public sealed class MinimalServer : IDisposable
     }
 }
 
+/// <summary>
+/// Domain type. The framework replicates fixed EntityState fields, so Player is the game-side
+/// shape and ToState/FromState is the mapping. Name is server-only (EntityState has no string).
+/// </summary>
+public sealed record Player(int Id, string Name, float X, float Y)
+{
+    public EntityState ToState() => EntityState.Create(Id, EntityKind.Player, X, Y);
+
+    public static Player FromState(EntityState state, string name = "") =>
+        new(state.Id, name, state.X, state.Y);
+}
+
 [RpcGroup("hello")]
 public sealed class HelloApi
 {
     private readonly EntityCollection _players;
+    private readonly Dictionary<int, Player> _roster = new();
     private int _nextId;
 
     public HelloApi([FromCollection("players")] EntityCollection players) => _players = players;
@@ -111,8 +127,12 @@ public sealed class HelloApi
     public int Spawn(string name)
     {
         var id = Interlocked.Increment(ref _nextId);
-        var hash = (float)(name.GetHashCode() & 0xFFFF) / 100f;
-        _players.Spawn(EntityState.Create(id, EntityKind.Player, hash, 0));
+        var player = new Player(id, name, (float)(name.GetHashCode() & 0xFFFF) / 100f, 0);
+        _roster[id] = player;
+        _players.Spawn(player.ToState());
         return id;
     }
+
+    [Rpc]
+    public string NameOf(int id) => _roster.TryGetValue(id, out var player) ? player.Name : "";
 }
