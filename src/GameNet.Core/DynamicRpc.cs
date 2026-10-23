@@ -11,6 +11,7 @@ public readonly struct RpcValue
     public const byte TagDouble = 3;
     public const byte TagString = 4;
     public const byte TagBytes = 5;
+    public const byte TagPacket = 6;
 
     public readonly byte Tag;
     public readonly long Int;
@@ -33,6 +34,7 @@ public readonly struct RpcValue
     public static RpcValue From(double v) => new(TagDouble, r: v);
     public static RpcValue From(string v) => new(TagString, s: v);
     public static RpcValue From(byte[] v) => new(TagBytes, d: v);
+    public static RpcValue Packet(byte[] v) => new(TagPacket, d: v);
 
     public static RpcValue From(object? value) => value switch
     {
@@ -42,7 +44,9 @@ public readonly struct RpcValue
         float or double or decimal => From(Convert.ToDouble(value)),
         string s => From(s),
         byte[] bytes => From(bytes),
-        _ => From(value.ToString() ?? string.Empty),
+        _ => RpcPacketCodecs.TryWrite(value, out var packet)
+            ? Packet(packet)
+            : throw new InvalidOperationException($"dynamic RPC cannot send {value.GetType().Name}; mark it [Packet] or pass primitives"),
     };
 
     public object? To(Type type)
@@ -63,7 +67,12 @@ public readonly struct RpcValue
         if (target == typeof(string)) return Text ?? string.Empty;
         if (target == typeof(byte[])) return Data ?? Array.Empty<byte>();
         if (target.IsEnum) return Enum.ToObject(target, Int);
-        return Text;
+        if (Tag == TagPacket && Data is not null)
+        {
+            if (RpcPacketCodecs.TryRead(target, Data, out var packet)) return packet;
+            throw new InvalidOperationException($"dynamic RPC cannot decode {target.Name}: packet codec is not registered");
+        }
+        throw new InvalidOperationException($"dynamic RPC cannot convert value to {target.Name}");
     }
 
     public T As<T>()
@@ -100,6 +109,7 @@ public static class RpcValueCodec
                 writer.WriteBytes(text);
                 break;
             case RpcValue.TagBytes:
+            case RpcValue.TagPacket:
                 writer.WriteVarUInt((uint)(value.Data?.Length ?? 0));
                 writer.WriteBytes(value.Data ?? Array.Empty<byte>());
                 break;
@@ -115,6 +125,7 @@ public static class RpcValueCodec
             RpcValue.TagDouble => RpcValue.From(BitConverter.Int64BitsToDouble((long)(((ulong)reader.ReadUInt() << 32) | reader.ReadUInt()))),
             RpcValue.TagString => RpcValue.From(System.Text.Encoding.UTF8.GetString(reader.ReadBytes((int)reader.ReadVarUInt()).ToArray())),
             RpcValue.TagBytes => RpcValue.From(reader.ReadBytes((int)reader.ReadVarUInt()).ToArray()),
+            RpcValue.TagPacket => RpcValue.Packet(reader.ReadBytes((int)reader.ReadVarUInt()).ToArray()),
             _ => RpcValue.Null,
         };
     }

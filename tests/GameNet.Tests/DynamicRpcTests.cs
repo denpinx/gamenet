@@ -25,6 +25,17 @@ public sealed class GreetingService
     }
 }
 
+[Packet]
+public partial record struct Profile(int Id, string Name, float Score);
+
+[RpcGroup("profile")]
+public sealed class ProfileApi
+{
+    [Rpc] public Profile Echo(Profile profile) => profile;
+
+    [Rpc] public Profile Get(int id) => new(id, "player" + id, id * 1.5f);
+}
+
 [RpcGroup("svc")]
 public sealed class ServiceApi
 {
@@ -183,6 +194,26 @@ public class DynamicRpcTests
         Assert.Equal("hi eve", await client.Group("svc").Call<string>("hello", "eve"));
         Assert.Equal(2, await client.Group("svc").Call<int>("calls")); // both calls hit one session instance
         Assert.Equal(2, greeting.Calls);
+    }
+    [Fact]
+    public async Task Group_CanPassAndReturnPacketTypes()
+    {
+        using var transport = new UdpServerTransport(0);
+        var server = new GameServer(transport, new ServerOptions { AoiRadius = 0, AutoSubscribe = false });
+        server.RpcGroups.AddGroup<ProfileApi>();
+        server.Start();
+        using var ticker = StartTicker(server);
+
+        using var client = new RpcClient();
+        Assert.True(client.Connect("127.0.0.1", transport.Port));
+
+        var fetched = await client.Group("profile").Call<Profile>("get", 7);
+        Assert.Equal(7, fetched.Id);
+        Assert.Equal("player7", fetched.Name);
+        Assert.Equal(10.5f, fetched.Score, 3);
+
+        var echoed = await client.Group("profile").Call<Profile>("echo", new Profile(3, "alice", 1.25f));
+        Assert.Equal(new Profile(3, "alice", 1.25f), echoed);
     }
     [Fact]
     public async Task Group_IsConstructedThroughDependencyInjection()
