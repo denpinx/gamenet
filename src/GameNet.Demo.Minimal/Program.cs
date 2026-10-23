@@ -1,7 +1,7 @@
 using GameNet.Core;
 using GameNet.Transport;
 
-// Minimal end-to-end example: one collection ("players"), one RPC group ("hello").
+// Minimal end-to-end example: one typed collection ("players"), one RPC group ("hello").
 // Run `dotnet run --project src/GameNet.Demo.Minimal -c Release` for the in-process demo,
 // or `-- --server --port 7777` / `-- --client --port 7777` for two processes.
 
@@ -49,27 +49,25 @@ static async Task RunClientAsync(string host, int port)
         return;
     }
 
+    // Typed world: no ToState/FromState, the generated codec handles the wire.
+    var players = client.RegisterTypedCollection<PlayerView>("players");
     client.Subscribe("players");
 
     var id = await client.Group("hello").Call<int>("spawn", "alice");
     var greeting = await client.Group("hello").Call<string>("greet", "alice");
     Console.WriteLine($"rpc greet -> {greeting}");
-    Console.WriteLine($"rpc spawn -> entity {id}");
+    Console.WriteLine($"rpc spawn -> player {id}");
 
-    for (var i = 0; i < 100 && (client.EntitiesFor("players")?.Count ?? 0) == 0; i++)
+    for (var i = 0; i < 100 && !players.Entities.ContainsKey(id); i++)
         await Task.Delay(10);
 
-    var players = client.EntitiesFor("players");
-    Console.WriteLine($"subscribed collection 'players': {players?.Count ?? 0} entity/entities");
-    if (players is not null && players.TryGetValue(id, out var state))
-    {
-        var name = await client.Group("hello").Call<string>("nameOf", id); // names are not in EntityState
-        var me = Player.FromState(state, name);
-        Console.WriteLine($"my player: id={me.Id} name={me.Name} pos=({me.X},{me.Y})");
-    }
+    if (players.Entities.TryGetValue(id, out var me))
+        Console.WriteLine($"typed collection 'players': id={me.Id} name={me.Name} pos=({me.X},{me.Y})");
+    else
+        Console.WriteLine("typed collection 'players': player did not arrive");
 }
 
-/// <summary>The whole server: one transport, one collection, one RPC group.</summary>
+/// <summary>The whole server: one transport, one typed collection, one RPC group.</summary>
 public sealed class MinimalServer : IDisposable
 {
     private readonly UdpServerTransport _transport;
@@ -79,8 +77,8 @@ public sealed class MinimalServer : IDisposable
     {
         _transport = new UdpServerTransport(port);
         _server = new GameServer(_transport, new ServerOptions { AutoSubscribe = false, AoiRadius = 0 });
-        _server.RegisterCollection("players", new EntityCollection());
-        _server.RpcGroups.AddGroup<HelloApi>(new EmptyProvider());
+        var players = _server.RegisterTypedCollection<Player>("players");
+        _server.RpcGroups.AddGroup(new HelloApi(players));
         _server.Start(autoTick: true, tickRate: 30);
     }
 
@@ -91,34 +89,32 @@ public sealed class MinimalServer : IDisposable
         _server.StopAutoTick();
         _transport.Dispose();
     }
-
-    /// <summary>Groups resolve dependencies from this; collections come from [FromCollection].</summary>
-    private sealed class EmptyProvider : IServiceProvider
-    {
-        public object? GetService(Type serviceType) => null;
-    }
 }
 
-/// <summary>
-/// Domain type. The framework replicates fixed EntityState fields, so Player is the game-side
-/// shape and ToState/FromState is the mapping. Name is server-only (EntityState has no string).
-/// </summary>
-public sealed record Player(int Id, string Name, float X, float Y)
+/// <summary>Server-side authoritative entity: mutable class, generated codec.</summary>
+[Entity("player")]
+public sealed partial class Player
 {
-    public EntityState ToState() => EntityState.Create(Id, EntityKind.Player, X, Y);
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public float X { get; set; }
+    public float Y { get; set; }
+}
 
-    public static Player FromState(EntityState state, string name = "") =>
-        new(state.Id, name, state.X, state.Y);
+/// <summary>Client-side view: record, same field ids, generated codec.</summary>
+[Entity("player")]
+public sealed partial record PlayerView(int Id, string Name, float X, float Y)
+{
+    public PlayerView() : this(0, string.Empty, 0, 0) { }
 }
 
 [RpcGroup("hello")]
 public sealed class HelloApi
 {
-    private readonly EntityCollection _players;
-    private readonly Dictionary<int, Player> _roster = new();
+    private readonly TypedCollection<Player> _players;
     private int _nextId;
 
-    public HelloApi([FromCollection("players")] EntityCollection players) => _players = players;
+    public HelloApi(TypedCollection<Player> players) => _players = players;
 
     [Rpc]
     public string Greet(string name) => $"hello {name}";
@@ -127,12 +123,13 @@ public sealed class HelloApi
     public int Spawn(string name)
     {
         var id = Interlocked.Increment(ref _nextId);
-        var player = new Player(id, name, (float)(name.GetHashCode() & 0xFFFF) / 100f, 0);
-        _roster[id] = player;
-        _players.Spawn(player.ToState());
+        _players.Spawn(id, new Player
+        {
+            Id = id,
+            Name = name,
+            X = name.GetHashCode() & 0xFFFF,
+            Y = 0,
+        });
         return id;
     }
-
-    [Rpc]
-    public string NameOf(int id) => _roster.TryGetValue(id, out var player) ? player.Name : "";
 }

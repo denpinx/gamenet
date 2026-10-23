@@ -18,6 +18,7 @@ public sealed class PacketGenerator : IIncrementalGenerator
 {
     private const string PacketAttribute = "GameNet.Core.PacketAttribute";
     private const string FieldAttribute = "GameNet.Core.FieldAttribute";
+    private const string EntityAttribute = "GameNet.Core.EntityAttribute";
 
     private static readonly DiagnosticDescriptor UnsupportedType = new(
         "GEN002", "Unsupported packet field type",
@@ -46,18 +47,32 @@ public sealed class PacketGenerator : IIncrementalGenerator
                 PacketAttribute,
                 static (node, _) => node is TypeDeclarationSyntax,
                 static (ctx, _) => ctx.TargetSymbol as INamedTypeSymbol)
-            .Where(static s => s is not null);
+            .Where(static s => s is not null)
+            .Collect();
 
-        context.RegisterSourceOutput(packets, static (spc, symbol) =>
+        var entities = context.SyntaxProvider
+            .ForAttributeWithMetadataName(
+                EntityAttribute,
+                static (node, _) => node is TypeDeclarationSyntax,
+                static (ctx, _) => ctx.TargetSymbol as INamedTypeSymbol)
+            .Where(static s => s is not null)
+            .Collect();
+
+        context.RegisterSourceOutput(packets.Combine(entities), static (spc, pair) =>
         {
-            try
+            var seen = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
+            foreach (var symbol in pair.Left.Concat(pair.Right))
             {
-                Emit(spc, symbol!);
-            }
-            catch (System.Exception ex)
-            {
-                spc.ReportDiagnostic(Diagnostic.Create(InternalError, symbol!.Locations.FirstOrDefault(),
-                    symbol.Name, ex.GetType().Name + ": " + ex.Message));
+                if (symbol is null || !seen.Add(symbol)) continue;
+                try
+                {
+                    Emit(spc, symbol);
+                }
+                catch (System.Exception ex)
+                {
+                    spc.ReportDiagnostic(Diagnostic.Create(InternalError, symbol.Locations.FirstOrDefault(),
+                        symbol.Name, ex.GetType().Name + ": " + ex.Message));
+                }
             }
         });
     }
@@ -212,7 +227,7 @@ public sealed class PacketGenerator : IIncrementalGenerator
         builder.AppendLine($"    public static void WriteDelta(ref ByteWriter w, {typeName} value, ulong mask)");
         builder.AppendLine("    {");
         foreach (var field in fields)
-            builder.AppendLine($"        if ((mask & {Bit(field.Order)}) != 0) {field.Write};");
+            builder.AppendLine($"        if ((mask & {Bit(field.Order)}) != 0) {{ {field.Write} }}");
         builder.AppendLine("    }");
         builder.AppendLine();
 
@@ -257,10 +272,13 @@ public sealed class PacketGenerator : IIncrementalGenerator
         var kind = symbol.IsRecord
             ? (symbol.IsValueType ? "record struct" : "record")
             : (symbol.IsValueType ? "struct" : "class");
-        wire.AppendLine($"{modifiers}partial {kind} {symbol.Name} : global::GameNet.Core.IWireCodec<{typeName}>");
+        wire.AppendLine($"{modifiers}partial {kind} {symbol.Name} : global::GameNet.Core.IWireCodec<{typeName}>, global::GameNet.Core.IEntityCodec<{typeName}>");
         wire.AppendLine("{");
         wire.AppendLine($"    public static void Write(global::GameNet.Core.ByteWriter writer, {typeName} value) => {ns}.{codecName}.Write(ref writer, value);");
         wire.AppendLine($"    public static {typeName} Read(ref global::GameNet.Core.ByteReader reader) => {ns}.{codecName}.Read(ref reader);");
+        wire.AppendLine($"    public static ulong DiffMask({typeName} a, {typeName} b) => {ns}.{codecName}.DiffMask(a, b);");
+        wire.AppendLine($"    public static void WriteDelta(global::GameNet.Core.ByteWriter writer, {typeName} value, ulong mask) => {ns}.{codecName}.WriteDelta(ref writer, value, mask);");
+        wire.AppendLine($"    public static {typeName} ApplyDelta(ref global::GameNet.Core.ByteReader reader, {typeName} target, ulong mask) => {ns}.{codecName}.ApplyDelta(ref reader, target, mask);");
         wire.AppendLine("}");
         context.AddSource(codecName + ".wire.g.cs", SourceText.From(wire.ToString(), Encoding.UTF8));
     }

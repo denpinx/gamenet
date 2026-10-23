@@ -45,6 +45,7 @@ public sealed class GameServer
     private readonly IServerTransport _transport;
     private readonly Dictionary<int, Session> _sessions = new();
     private readonly Dictionary<byte, EntityCollection> _collections = new();
+    private readonly Dictionary<byte, ITypedCollection> _typedCollections = new();
     private readonly Dictionary<string, byte> _collectionIds = new();
     private readonly Dictionary<string, EntityCollection> _collectionsByName = new(StringComparer.OrdinalIgnoreCase);
     private byte _nextCollectionId = 1;
@@ -74,6 +75,17 @@ public sealed class GameServer
         _collectionIds[name] = id;
         _collections[id] = collection;
         _collectionsByName[name] = collection;
+        return collection;
+    }
+
+    /// <summary>Registers a typed entity collection; T's codec is generated from [Entity].</summary>
+    public TypedCollection<T> RegisterTypedCollection<T>(string name) where T : class, IEntityCodec<T>
+    {
+        if (_collectionIds.ContainsKey(name)) throw new InvalidOperationException($"collection '{name}' is already registered");
+        var id = _nextCollectionId++;
+        _collectionIds[name] = id;
+        var collection = new TypedCollection<T>(id, name);
+        _typedCollections[id] = collection;
         return collection;
     }
 
@@ -184,6 +196,7 @@ public sealed class GameServer
         if (Options.AutoSubscribe)
         {
             foreach (var id in _collections.Keys) session.Subscriptions.Add(id);
+            foreach (var id in _typedCollections.Keys) session.Subscriptions.Add(id);
         }
         SendCollectionRegistry(peer);
         SessionJoined?.Invoke(session);
@@ -209,6 +222,7 @@ public sealed class GameServer
         Session? session;
         lock (_sessions) _sessions.Remove(peer.Id, out session);
         RpcGroups.RemoveSession(peer.Id);
+        foreach (var collection in _typedCollections.Values) collection.RemoveSession(peer.Id);
         if (session is not null) SessionLeft?.Invoke(session);
     }
 
@@ -229,6 +243,7 @@ public sealed class GameServer
             if (!ReferenceEquals(collection, Entities)) collection.Tick(deltaSeconds);
         }
         Entities.Tick(deltaSeconds);
+        foreach (var collection in _typedCollections.Values) collection.Tick(deltaSeconds);
 
         _version++;
         long bytes = 0;
@@ -352,6 +367,11 @@ public sealed class GameServer
         long bytes = 0;
         foreach (var collectionId in session.Subscriptions.ToList())
         {
+            if (_typedCollections.TryGetValue(collectionId, out var typed))
+            {
+                typed.Replicate(session, _version, (uint)Environment.TickCount64);
+                continue;
+            }
             if (_collections.TryGetValue(collectionId, out var collection))
                 bytes += ReplicateCollection(session, collectionId, collection);
         }

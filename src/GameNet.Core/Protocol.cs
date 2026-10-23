@@ -15,6 +15,7 @@ public enum MessageType : byte
     CollectionRegistry = 11,
     RpcCall = 12,
     RpcCallResponse = 13,
+    TypedSnapshot = 14,
 }
 
 public enum EntityKind : byte

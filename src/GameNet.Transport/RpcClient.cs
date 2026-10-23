@@ -38,6 +38,7 @@ public sealed class RpcClient : IDisposable
     private readonly UdpClientTransport _transport;
     private readonly ConcurrentDictionary<uint, TaskCompletionSource<RpcReply>> _pending = new();
     private readonly ConcurrentDictionary<string, byte> _collections = new();
+    private readonly ConcurrentDictionary<byte, ITypedWorld> _typedWorlds = new();
     private Thread? _pump;
     private volatile bool _running;
     private uint _nextId;
@@ -68,6 +69,23 @@ public sealed class RpcClient : IDisposable
 
     public IReadOnlyDictionary<int, EntityState>? EntitiesFor(string name) =>
         _collections.TryGetValue(name, out var id) ? World.EntitiesFor(id) : null;
+
+    /// <summary>Creates a typed world for a [Entity] collection; call Subscribe(name) as well.</summary>
+    public TypedWorld<T> RegisterTypedCollection<T>(string name, int timeoutMs = 2000) where T : class, IEntityCodec<T>
+    {
+        if (!TryResolve(name, timeoutMs, out var id))
+            throw new KeyNotFoundException($"collection '{name}' was not announced by the server");
+        var world = new TypedWorld<T>(id);
+        _typedWorlds[id] = world;
+        return world;
+    }
+
+    public TypedWorld<T> Typed<T>(string name) where T : class, IEntityCodec<T>
+    {
+        if (!_collections.TryGetValue(name, out var id) || !_typedWorlds.TryGetValue(id, out var world))
+            throw new KeyNotFoundException($"typed collection '{name}' is not registered");
+        return (TypedWorld<T>)world;
+    }
 
     public bool TryGetCollectionId(string name, out byte id) => _collections.TryGetValue(name, out id);
 
@@ -110,7 +128,16 @@ public sealed class RpcClient : IDisposable
                 {
                     if (packet.Channel == 0)
                     {
-                        if (SnapshotCodec.TryRead(packet.Payload, out var chunk)) World.OnChunk(chunk);
+                        if (packet.Payload.Length > 0 && packet.Payload[0] == (byte)MessageType.TypedSnapshot)
+                        {
+                            if (TypedSnapshotCodec.TryRead(packet.Payload, out var typedChunk) &&
+                                _typedWorlds.TryGetValue(typedChunk.Collection, out var typedWorld))
+                                typedWorld.Apply(typedChunk);
+                        }
+                        else if (SnapshotCodec.TryRead(packet.Payload, out var chunk))
+                        {
+                            World.OnChunk(chunk);
+                        }
                         continue;
                     }
                     if (packet.Channel != 1) continue;
