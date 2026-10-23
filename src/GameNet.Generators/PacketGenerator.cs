@@ -36,6 +36,11 @@ public sealed class PacketGenerator : IIncrementalGenerator
         "GEN005", "Too many packet fields",
         "'{0}' has {1} fields; at most 64 are supported (one ulong mask)", "GameNet", DiagnosticSeverity.Error, true);
 
+    private static readonly DiagnosticDescriptor InheritanceNotSupported = new(
+        "GEN006", "Inherited packet fields are not serialized",
+        "'{0}' derives from '{1}', which declares serializable properties; [Packet]/[Entity] only serializes properties declared on the type itself. Flatten the fields or use composition.",
+        "GameNet", DiagnosticSeverity.Error, true);
+
     private static readonly DiagnosticDescriptor InternalError = new(
         "GEN099", "Packet generator failed",
         "Generating codec for '{0}' failed: {1}", "GameNet", DiagnosticSeverity.Error, true);
@@ -92,6 +97,19 @@ public sealed class PacketGenerator : IIncrementalGenerator
     private static void Emit(SourceProductionContext context, INamedTypeSymbol symbol)
     {
         if (symbol.IsGenericType || symbol.ContainingType is not null) return;
+
+        var baseType = symbol.BaseType;
+        if (!symbol.IsValueType && baseType is not null && baseType.SpecialType != SpecialType.System_Object)
+        {
+            var inherited = baseType.GetMembers().OfType<IPropertySymbol>().Any(p =>
+                !p.IsStatic && p.DeclaredAccessibility == Accessibility.Public && p.SetMethod is not null);
+            if (inherited)
+            {
+                context.ReportDiagnostic(Diagnostic.Create(InheritanceNotSupported, symbol.Locations.FirstOrDefault(),
+                    symbol.Name, baseType.Name));
+                return;
+            }
+        }
 
         var members = symbol.GetMembers()
             .OfType<IPropertySymbol>()
