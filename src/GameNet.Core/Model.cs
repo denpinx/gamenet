@@ -65,14 +65,7 @@ public sealed class Session
         foreach (var known in Known.Values) known.Clear();
     }
 
-    public readonly ConcurrentQueue<InboundPacket> Inbound = new();
-
-    public bool TryDequeue(out InboundPacket packet) => Peer.TryDequeue(out packet) || Inbound.TryDequeue(out packet);
-
-    public void ClearInbound()
-    {
-        while (Inbound.TryDequeue(out _)) { }
-    }
+    public bool TryDequeue(out InboundPacket packet) => Peer.TryDequeue(out packet);
 }
 
 /// <summary>Authoritative entity store. Filter decides visibility per session (interest management).</summary>

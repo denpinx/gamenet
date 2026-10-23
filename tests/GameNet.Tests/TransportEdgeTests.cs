@@ -1,3 +1,4 @@
+using GameNet.Core;
 using GameNet.Transport;
 using Xunit;
 
@@ -83,6 +84,6 @@ public class TransportEdgeTests
         using var rpc = new RpcClient();
         Assert.True(rpc.Connect("127.0.0.1", server.Port));
 
-        await Assert.ThrowsAsync<TimeoutException>(() => rpc.CallAsync(9999, Array.Empty<byte>(), 300));
+        await Assert.ThrowsAsync<TimeoutException>(() => rpc.CallAsync<Empty, Empty>(9999, Empty.Value, 300));
     }
 }

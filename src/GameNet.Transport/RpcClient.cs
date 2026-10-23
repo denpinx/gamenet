@@ -169,7 +169,7 @@ public sealed class RpcClient : IDisposable
         return TResponse.Read(ref reader);
     }
 
-    public async Task<RpcReply> CallAsync(ushort methodId, byte[] payload, int timeoutMs = 5000, CancellationToken ct = default)
+    internal async Task<RpcReply> CallAsync(ushort methodId, byte[] payload, int timeoutMs = 5000, CancellationToken ct = default)
     {
         var id = Interlocked.Increment(ref _nextId);
         var writer = new ByteWriter(32 + payload.Length);

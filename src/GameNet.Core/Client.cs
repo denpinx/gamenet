@@ -32,10 +32,7 @@ public sealed class ClientWorld
     public IReadOnlyDictionary<int, EntityState> EntitiesFor(byte collection) => State(collection).Entities;
     public int EntityCount => _collections.Values.Sum(c => c.Entities.Count);
     public int EntityCountFor(byte collection) => State(collection).Entities.Count;
-    public int CollectionsSeen => _collections.Count;
     public long ChunksApplied { get; private set; }
-    public long SnapshotsApplied => ChunksApplied;
-    public int PendingVersions => 0;
     public bool NeedsResync { get; private set; }
 
     private readonly List<int> _lagSamples = new();
