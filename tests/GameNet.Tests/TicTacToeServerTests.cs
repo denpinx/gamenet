@@ -154,7 +154,7 @@ public class TicTacToeServerTests
                     for (var i = 0; i < 4; i++)
                     {
                         views[i] = await clients[i].StateAsync();
-                        if (views[i].Status != MatchStatus.Playing || (clients[i].EntitiesFor("matches")?.Count ?? 0) != 1) ready = false;
+                        if (views[i].Status != MatchStatus.Playing || clients[i].Matches.Count != 1) ready = false;
                     }
                     if (ready) break;
                     await Task.Delay(50);
@@ -162,10 +162,10 @@ public class TicTacToeServerTests
 
                 for (var i = 0; i < 4; i++)
                 {
-                    var matches = clients[i].EntitiesFor("matches");
-                    Assert.NotNull(matches);
-                    Assert.Single(matches!);
-                    Assert.Equal(views[i].MatchId, matches!.Keys.Single());
+                    var matches = clients[i].Matches.Entities;
+                    Assert.Single(matches);
+                    Assert.Equal(views[i].MatchId, matches.Keys.Single());
+                    Assert.Equal(views[i].Cells, matches.Values.Single().Board);
                     Assert.Equal(MatchStatus.Playing, views[i].Status);
                 }
 

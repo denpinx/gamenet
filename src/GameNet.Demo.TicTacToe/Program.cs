@@ -118,11 +118,9 @@ static async Task PlayAsync(TttClient client)
                 Print(view);
                 lastTurn = view.Turn;
             }
-            var matchEntities = client.EntitiesFor("matches");
-            if (!reportedCollection && matchEntities is not null && matchEntities.TryGetValue(view.MatchId, out var replicated))
+            if (!reportedCollection && client.Matches.Entities.TryGetValue(view.MatchId, out var replicated))
             {
-                var snapshot = MatchPack.Unpack(replicated);
-                Console.WriteLine($"[collection matches] my match #{view.MatchId}, board={string.Join(",", snapshot.Cells)}");
+                Console.WriteLine($"[collection matches] my match #{view.MatchId}, board={string.Join(",", replicated.Board)}");
                 reportedCollection = true;
             }
             if (view.IsMyTurn)
@@ -208,7 +206,7 @@ static async Task RunBotAsync()
         var vb = await b.StateAsync();
         if (va.Status is MatchStatus.Won or MatchStatus.Draw)
         {
-            Console.WriteLine($"collection matches: A sees {a.EntitiesFor("matches")?.Count ?? 0} match, B sees {b.EntitiesFor("matches")?.Count ?? 0}");
+            Console.WriteLine($"collection matches: A sees {a.Matches.Count} match, B sees {b.Matches.Count}");
             Console.WriteLine("final:");
             Console.WriteLine(RenderBoard(va.Cells));
             Console.WriteLine($"A({Mark(va.MySymbol)}) result={(va.Winner == va.MySymbol ? "win" : va.Status == MatchStatus.Draw ? "draw" : "lose")}");

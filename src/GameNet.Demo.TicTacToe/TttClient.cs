@@ -21,13 +21,19 @@ public sealed class TttClient : IDisposable
 {
     private readonly RpcClient _rpc = new();
 
-    public bool Connect(string host, int port) => _rpc.Connect(host, port);
+    public bool Connect(string host, int port)
+    {
+        if (!_rpc.Connect(host, port)) return false;
+        Matches = _rpc.RegisterTypedCollection<MatchBoard>("matches");
+        return true;
+    }
+
+    public TypedWorld<MatchBoard> Matches { get; private set; } = null!;
 
     public ClientWorld World => _rpc.World;
 
     public bool Subscribe(string name) => _rpc.Subscribe(name);
 
-    public IReadOnlyDictionary<int, EntityState>? EntitiesFor(string name) => _rpc.EntitiesFor(name);
 
     public Task<Ack> RegisterAsync(string username, string password) =>
         _rpc.CallAsync<RegisterRequest, Ack>(TttMethods.Register, new(username, password));

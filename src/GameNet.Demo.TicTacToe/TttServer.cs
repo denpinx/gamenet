@@ -40,7 +40,7 @@ public sealed class TttServer : IDisposable
 {
     private readonly UdpServerTransport _transport;
     private readonly GameServer _server;
-    private readonly EntityCollection _matches;
+    private readonly TypedCollection<MatchEntity> _matches;
     private readonly SqliteStore<UserRow> _users;
     private readonly ConcurrentDictionary<int, Player> _players = new();
     private readonly Queue<int> _queue = new();
@@ -53,9 +53,8 @@ public sealed class TttServer : IDisposable
     {
         _transport = new UdpServerTransport(0);
         _server = new GameServer(_transport, new ServerOptions { AutoSubscribe = false, AoiRadius = 0 });
-        _matches = _server.RegisterCollection("matches", new EntityCollection());
-        _matches.Filter = (session, entity) =>
-            _bySession.TryGetValue(session.Id, out var match) && match.Id == entity.Id;
+        _matches = _server.RegisterTypedCollection<MatchEntity>("matches");
+        _matches.Filter = (session, match) => match.PlayerA == session.Id || match.PlayerB == session.Id;
         _users = new SqliteStore<UserRow>($"Data Source={databasePath}");
         _users.EnsureSchema();
 
@@ -73,6 +72,16 @@ public sealed class TttServer : IDisposable
         _tick.Start();
     }
 
+    private static MatchEntity ToEntity(Match match) => new()
+    {
+        Id = match.Id,
+        PlayerA = match.PlayerA,
+        PlayerB = match.PlayerB,
+        Turn = match.Game.Turn,
+        Status = match.Game.Status,
+        Winner = match.Game.Winner,
+        Board = (byte[])match.Game.Cells.Clone(),
+    };
     public int Port => _transport.Port;
 
     private void TickLoop()
@@ -176,7 +185,7 @@ public sealed class TttServer : IDisposable
         var match = new Match { Id = _nextMatchId++, PlayerA = candidates[0], PlayerB = candidates[1] };
         _bySession[candidates[0]] = match;
         _bySession[candidates[1]] = match;
-        _matches.Spawn(MatchPack.Pack(match));
+        _matches.Spawn(match.Id, ToEntity(match));
         return EncodeQueue(MatchStatus.Playing, $"匹配成功，对局 #{match.Id}");
     }
 
@@ -218,7 +227,7 @@ public sealed class TttServer : IDisposable
 
         var symbol = match.SymbolOf(session.Id);
         var ok = match.Game.TryMove(symbol, request.Cell, out var error);
-        if (ok) _matches.Update(match.Id, MatchPack.Pack(match));
+        if (ok) _matches.Spawn(match.Id, ToEntity(match));
         return EncodeAck(ok, ok ? "ok" : error);
     }
 
@@ -229,7 +238,7 @@ public sealed class TttServer : IDisposable
         {
             var opponent = match.OpponentOf(session.Id);
             match.Game.Forfeit(match.SymbolOf(session.Id));
-            _matches.Update(match.Id, MatchPack.Pack(match));
+            _matches.Spawn(match.Id, ToEntity(match));
             _bySession.TryRemove(opponent, out _);
         }
     }
