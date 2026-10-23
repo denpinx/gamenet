@@ -1,0 +1,16 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\GameNet.Core\GameNet.Core.csproj" />
+    <ProjectReference Include="..\GameNet.Transport\GameNet.Transport.csproj" />
+    <ProjectReference Include="..\GameNet.Persistence\GameNet.Persistence.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

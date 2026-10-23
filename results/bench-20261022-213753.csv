@@ -1,0 +1,2 @@
+objects,mode,clients,tick_avg_ms,tick_p50_ms,tick_p95_ms,tick_p99_ms,tick_max_ms,visible_avg,down_kBps_client,total_mbit,wire_mbit,up_kBps,client_apply_us,client_entities,datagrams,window_blocked,retransmits,fast_retransmits,lag_p50_ms,lag_p99_ms,lag_avg_ms
+1000,AOI on,10,0.358,0.297,0.727,1.060,1.855,104.7,13.3,1.230,1.507,2.4,11.6,101.6,6925,0,2032,35,94.0,266.0,105.5

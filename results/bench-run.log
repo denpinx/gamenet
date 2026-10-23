@@ -1,0 +1,37 @@
+== objects=50 AOI on ==
+   tick avg=0.45ms p95=0.96ms max=3.51ms | visible=14 | down=2.9KB/s/client | total=0.24Mbit/s payload (0.36Mbit/s wire)
+== objects=200 AOI on ==
+   tick avg=0.54ms p95=1.03ms max=8.58ms | visible=49 | down=6.9KB/s/client | total=0.57Mbit/s payload (0.69Mbit/s wire)
+== objects=1000 AOI on ==
+   tick avg=0.57ms p95=1.16ms max=2.15ms | visible=96 | down=12.3KB/s/client | total=1.01Mbit/s payload (1.13Mbit/s wire)
+== objects=5000 AOI on ==
+   tick avg=0.91ms p95=1.79ms max=10.87ms | visible=115 | down=14.0KB/s/client | total=1.15Mbit/s payload (1.27Mbit/s wire)
+== objects=20000 AOI on ==
+   tick avg=1.62ms p95=2.59ms max=4.16ms | visible=110 | down=14.5KB/s/client | total=1.19Mbit/s payload (1.31Mbit/s wire)
+== objects=200 AOI off ==
+   tick avg=0.58ms p95=1.12ms max=2.15ms | visible=210 | down=28.6KB/s/client | total=2.34Mbit/s payload (2.47Mbit/s wire)
+== objects=1000 AOI off ==
+   tick avg=1.96ms p95=3.35ms max=4.88ms | visible=1010 | down=104.9KB/s/client | total=8.50Mbit/s payload (9.35Mbit/s wire)
+
+# 10-player FPS replication benchmark
+
+Generated: 2026-10-22 20:14:12
+Server tick 30 Hz, 10 clients over UDP loopback, constant object density (100 u² per object), AOI radius 60 when enabled.
+
+| objects | mode | tick avg (ms) | p95 (ms) | p99 (ms) | max (ms) | visible/client | entities/client | down KB/s per client | total Mbit/s | wire Mbit/s | client apply (µs) |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 50 | AOI on | 0.45 | 0.96 | 1.94 | 3.51 | 14 | 14 | 2.9 | 0.24 | 0.36 | 1 |
+| 200 | AOI on | 0.54 | 1.03 | 2.04 | 8.58 | 49 | 49 | 6.9 | 0.57 | 0.69 | 2 |
+| 1000 | AOI on | 0.57 | 1.16 | 1.95 | 2.15 | 96 | 96 | 12.3 | 1.01 | 1.13 | 3 |
+| 5000 | AOI on | 0.91 | 1.79 | 2.69 | 10.87 | 115 | 115 | 14.0 | 1.15 | 1.27 | 4 |
+| 20000 | AOI on | 1.62 | 2.59 | 3.51 | 4.16 | 110 | 110 | 14.5 | 1.19 | 1.31 | 4 |
+| 200 | AOI off | 0.58 | 1.12 | 1.58 | 2.15 | 210 | 210 | 28.6 | 2.34 | 2.47 | 5 |
+| 1000 | AOI off | 1.96 | 3.35 | 4.25 | 4.88 | 1010 | 909 | 104.9 | 8.50 | 9.35 | 5 |
+
+Notes:
+- `total_mbit` counts protocol payload only; `wire_mbit` adds ~40 B per datagram (IP 20 + UDP 8 + frame 12).
+- Server and clients share one process on loopback, so absolute numbers are indicative, not production capacity.
+- `AOI off` rows show the cost of unfiltered replication and are not run at 20k objects.
+
+CSV: D:\多人游戏网络架构设计\results\bench-20261022-201412.csv
+MD : D:\多人游戏网络架构设计\results\bench-20261022-201412.md
