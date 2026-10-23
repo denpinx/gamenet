@@ -31,7 +31,7 @@
 | 传输 | 单 UDP 端口，三通道：状态（可靠、默认乱序）、RPC（可靠有序）、输入（不可靠原始） |
 | 可靠层 | seq + 累计 ACK + SACK、RTT/RTO、快速重传、NACK、拥塞窗口、分片重组、`Skip` 放弃、可选状态冗余（FEC） |
 | 状态复制 | 字段位图差量、Chunk 分块、非原子应用（坏块只影响对应实体）、每实体 tick 防旧包、墓碑防复活、Resync |
-| 兴趣管理 | AOI 半径、按会话 `Filter`、多集合、按名字订阅/退订、集合注册表下发 |
+| 兴趣管理 | 按会话 `Filter`（圆形 AOI 只是默认可替换的 Filter）、多集合、按名字订阅/退订、集合注册表下发 |
 | RPC | 方法 ID + 源生成编解码的类型化调用；`[RpcGroup]`/`[Rpc]` 的名字化动态调用；构造注入、单实例/每连接生命周期 |
 | 持久化 | 代码优先建表、嵌套拆表、外键与级联、部分更新、Blob+压缩、自动补列迁移、`PersistableSet` tick 自动保存 |
 | 源生成 | `[Packet]` → `Write/Read/DiffMask/WriteDelta/ApplyDelta/SchemaHash/IWireCodec` |
@@ -43,7 +43,7 @@
 pwsh -File scripts/run-all.ps1              # build + test + benchmark
 pwsh -File scripts/run-all.ps1 -SkipBench   # 只 build + test
 
-dotnet test tests/GameNet.Tests/GameNet.Tests.csproj          # 226 passed
+dotnet test tests/GameNet.Tests/GameNet.Tests.csproj          # 231 passed
 dotnet run --project src/GameNet.Demo.Minimal -c Release              # 最小示例：一个集合 + 一个 RPC 组
 dotnet run --project src/GameNet.Demo.TicTacToe -c Release -- --bot   # 井字棋：注册 + 匹配 + 对局
 dotnet run --project src/GameNet.Demo.Scenarios -c Release -- all     # 聊天室订阅 / 噪音集合 / 增量更新
@@ -91,13 +91,13 @@ src/GameNet.Persistence   代码优先 SQLite/MySQL schema、CRUD、Blob、自�
 src/GameNet.Generators    Roslyn 增量生成器（[Packet] → 编解码）
 src/GameNet.Benchmarks    多进程基准（服务端/客户端子进程）
 src/GameNet.Demo.*        最小示例、井字棋、场景（聊天/噪音/增量）
-tests/GameNet.Tests       226 个单元/集成/故障注入/协议兼容测试
+tests/GameNet.Tests       231 个单元/集成/故障注入/协议兼容测试
 scripts/run-all.ps1       build + test（含覆盖率门槛）+ benchmark
 ```
 
 ## 项目定位
 
-**alpha 级框架内核**：协议、传输、持久化、基准都已跑通并有测试；离「可直接上线」还差鉴权/TLS、断线续局、对局持久化、空间索引、带宽限速和跨机压测。代码约 6 000 行，226 个测试，行覆盖率 82.9%（分支 70.6%）。
+**alpha 级框架内核**：协议、传输、持久化、基准都已跑通并有测试；离「可直接上线」还差鉴权/TLS、断线续局、对局持久化、空间索引、带宽限速和跨机压测。代码约 6 000 行，231 个测试。
 
 横向对比：远未达到 FishNet / Colyseus 的成熟度（多年迭代、文档、社区），但已经超过「玩具 demo」——它能承载一个完整产品闭环（见井字棋示例），并且每个性能数字都有可复现的基准。
 

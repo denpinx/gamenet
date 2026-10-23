@@ -57,6 +57,9 @@ public sealed class GameServer
         Rpc = new RpcDispatcher();
         RpcGroups.CollectionResolver = ResolveCollection;
         _collections[0] = Entities;
+
+        // Circle AOI is only a default filter, not a hardcoded rule. Set Entities.Filter to replace it.
+        if (Options.AoiRadius > 0) Entities.Filter ??= Aoi.Circle(Options.AoiRadius);
     }
 
     public ServerOptions Options { get; }
@@ -357,16 +360,9 @@ public sealed class GameServer
 
     private long ReplicateCollection(Session session, byte collectionId, EntityCollection collection)
     {
-        // Collection 0 carries avatars: with AOI enabled, wait for a bound avatar so the first
-        // snapshot does not push the whole world. Other collections replicate immediately.
-        if (collectionId == 0 && Options.AoiRadius > 0 && !session.HasAvatar) return 0;
-
-        var viewer = session.Avatar;
-        if (session.HasAvatar && Entities.TryGet(viewer.Id, out var current))
-        {
-            viewer = current;
-            session.Avatar = current; // keep the AOI centre in sync with the simulated entity
-        }
+        // Keep the session avatar in sync with the simulated entity; the visibility policy reads it.
+        if (collectionId == 0 && session.HasAvatar && Entities.TryGet(session.Avatar.Id, out var current))
+            session.Avatar = current;
 
         var visible = new List<EntityState>(Math.Min(collection.Count, 512));
         var visibleIds = new HashSet<int>();
@@ -374,18 +370,6 @@ public sealed class GameServer
         foreach (var entity in collection.Items.Values)
         {
             if (!collection.IsVisible(session, entity)) continue;
-            if (collectionId == 0 && session.HasAvatar && entity.Id == viewer.Id)
-            {
-                visible.Add(entity);
-                visibleIds.Add(entity.Id);
-                continue;
-            }
-            if (collectionId == 0 && Options.AoiRadius > 0 && session.HasAvatar)
-            {
-                var dx = entity.X - viewer.X;
-                var dy = entity.Y - viewer.Y;
-                if (dx * dx + dy * dy > Options.AoiRadius * Options.AoiRadius) continue;
-            }
             visible.Add(entity);
             visibleIds.Add(entity.Id);
         }
