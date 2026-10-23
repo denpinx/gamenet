@@ -15,10 +15,7 @@ public sealed partial class PlayerEntity
 }
 
 [Entity("player")]
-public sealed partial record PlayerView(int Id, string Name, float X, float Y)
-{
-    public PlayerView() : this(0, string.Empty, 0, 0) { }
-}
+public sealed partial record PlayerView(int Id, string Name, float X, float Y);
 
 public class TypedCollectionTests
 {

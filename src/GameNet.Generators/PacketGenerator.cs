@@ -83,6 +83,7 @@ public sealed class PacketGenerator : IIncrementalGenerator
         public byte Tag;
         public string Name = "";
         public string TypeName = "";
+        public bool IsValueType;
         public string Write = "";
         public string Read = "";
         public string Diff = "";
@@ -114,6 +115,7 @@ public sealed class PacketGenerator : IIncrementalGenerator
                 Order = allExplicit ? explicitOrders[index]!.Value : index + 1,
                 Name = member.Name,
                 TypeName = member.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                IsValueType = member.Type.IsValueType,
             };
 
             try
@@ -139,15 +141,16 @@ public sealed class PacketGenerator : IIncrementalGenerator
             return;
         }
 
+        fields.Sort((a, b) => a.Order.CompareTo(b.Order));
+
         var hasParameterlessCtor = symbol.InstanceConstructors.Any(c =>
             c.Parameters.Length == 0 && c.DeclaredAccessibility is Accessibility.Public or Accessibility.Internal);
-        if (!hasParameterlessCtor && !symbol.IsValueType)
+        var constructor = FindMatchingConstructor(symbol, fields);
+        if (!hasParameterlessCtor && constructor is null && !symbol.IsValueType)
         {
             context.ReportDiagnostic(Diagnostic.Create(NoParameterlessCtor, symbol.Locations.FirstOrDefault(), symbol.Name));
             return;
         }
-
-        fields.Sort((a, b) => a.Order.CompareTo(b.Order));
         var typeName = symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
         var codecName = symbol.Name + "PacketCodec";
         var ns = symbol.ContainingNamespace.IsGlobalNamespace
@@ -184,9 +187,17 @@ public sealed class PacketGenerator : IIncrementalGenerator
 
         builder.AppendLine($"    public static {typeName} Read(ref ByteReader r)");
         builder.AppendLine("    {");
-        builder.AppendLine(symbol.IsValueType
-            ? $"        var result = default({typeName});"
-            : $"        var result = new {typeName}();");
+        if (constructor is not null)
+        {
+            foreach (var field in fields)
+                builder.AppendLine($"        var v_{field.Name} = default({field.TypeName}){(field.IsValueType ? string.Empty : "!")};");
+        }
+        else
+        {
+            builder.AppendLine(symbol.IsValueType
+                ? $"        var result = default({typeName});"
+                : $"        var result = new {typeName}();");
+        }
         builder.AppendLine("        while (!r.End)");
         builder.AppendLine("        {");
         builder.AppendLine("            var id = r.ReadVarUInt();");
@@ -201,7 +212,9 @@ public sealed class PacketGenerator : IIncrementalGenerator
             builder.AppendLine($"                    if (tag != {field.Tag}) throw new InvalidOperationException(\"field {field.Name} of {symbol.Name} expects tag {field.Tag} but got \" + tag);");
             builder.AppendLine("                    {");
             builder.AppendLine("                        var fr = new ByteReader(payload);");
-            if (symbol.IsRecord)
+            if (constructor is not null)
+                builder.AppendLine($"                        v_{field.Name} = {field.Read.Replace("r.", "fr.")};");
+            else if (symbol.IsRecord)
                 builder.AppendLine($"                        result = result with {{ {field.Name} = {field.Read.Replace("r.", "fr.")} }};");
             else
                 builder.AppendLine($"                        result.{field.Name} = {field.Read.Replace("r.", "fr.")};");
@@ -212,7 +225,9 @@ public sealed class PacketGenerator : IIncrementalGenerator
         builder.AppendLine("                    break; // unknown field from a newer writer");
         builder.AppendLine("            }");
         builder.AppendLine("        }");
-        builder.AppendLine("        return result;");
+        builder.AppendLine(constructor is not null
+            ? $"        return new {typeName}({string.Join(", ", constructor.Parameters.Select(p => "v_" + fields.First(f => string.Equals(f.Name, p.Name, System.StringComparison.OrdinalIgnoreCase)).Name))});"
+            : "        return result;");
         builder.AppendLine("    }");
         builder.AppendLine();
 
@@ -246,7 +261,9 @@ public sealed class PacketGenerator : IIncrementalGenerator
             builder.AppendLine("        var result = target;");
             foreach (var field in fields)
                 builder.AppendLine($"        if ((mask & {Bit(field.Order)}) != 0) result.{field.Name} = {field.Read};");
-            builder.AppendLine("        return result;");
+            builder.AppendLine(constructor is not null
+            ? $"        return new {typeName}({string.Join(", ", constructor.Parameters.Select(p => "v_" + fields.First(f => string.Equals(f.Name, p.Name, System.StringComparison.OrdinalIgnoreCase)).Name))});"
+            : "        return result;");
         }
         else
         {
@@ -283,6 +300,20 @@ public sealed class PacketGenerator : IIncrementalGenerator
         context.AddSource(codecName + ".wire.g.cs", SourceText.From(wire.ToString(), Encoding.UTF8));
     }
 
+    private static IMethodSymbol? FindMatchingConstructor(INamedTypeSymbol symbol, List<FieldModel> fields)
+    {
+        foreach (var constructor in symbol.InstanceConstructors)
+        {
+            if (constructor.DeclaredAccessibility is not (Accessibility.Public or Accessibility.Internal)) continue;
+            var parameters = constructor.Parameters;
+            if (parameters.Length != fields.Count) continue;
+            var matches = parameters.All(p => fields.Any(f =>
+                string.Equals(f.Name, p.Name, System.StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(f.TypeName, p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), System.StringComparison.Ordinal)));
+            if (matches) return constructor;
+        }
+        return null;
+    }
     private static bool IsPartial(INamedTypeSymbol symbol) =>
         symbol.DeclaringSyntaxReferences.Any(reference =>
             reference.GetSyntax() is TypeDeclarationSyntax declaration &&

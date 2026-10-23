@@ -103,10 +103,7 @@ public sealed partial class Player
 
 /// <summary>Client-side view: record, same field ids, generated codec.</summary>
 [Entity("player")]
-public sealed partial record PlayerView(int Id, string Name, float X, float Y)
-{
-    public PlayerView() : this(0, string.Empty, 0, 0) { }
-}
+public sealed partial record PlayerView(int Id, string Name, float X, float Y);
 
 [RpcGroup("hello")]
 public sealed class HelloApi
