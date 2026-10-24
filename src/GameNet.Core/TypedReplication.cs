@@ -118,7 +118,7 @@ public interface ITypedCollection
     byte Id { get; }
     string Name { get; }
     void Tick(double deltaSeconds);
-    void Replicate(Session session, uint version, uint serverTimeMs);
+    void Replicate(Session session, uint version, uint serverTimeMs, int maxBytesPerSecond);
     void RemoveSession(int sessionId);
 }
 
@@ -150,7 +150,7 @@ public sealed class TypedCollection<T> : ITypedCollection where T : class, IEnti
 
     public void RemoveSession(int sessionId) => _known.Remove(sessionId);
 
-    void ITypedCollection.Replicate(Session session, uint version, uint serverTimeMs)
+    void ITypedCollection.Replicate(Session session, uint version, uint serverTimeMs, int maxBytesPerSecond)
     {
         if (!_known.TryGetValue(session.Id, out var known))
         {
@@ -190,6 +190,9 @@ public sealed class TypedCollection<T> : ITypedCollection where T : class, IEnti
         if (entries.Count == 0) return;
 
         var chunks = TypedSnapshotCodec.Build(Id, version, serverTimeMs, entries);
+        var totalBytes = chunks.Sum(c => (long)c.Length);
+        if (!session.TryConsume(totalBytes, maxBytesPerSecond, Environment.TickCount64)) return;
+
         var delivered = true;
         foreach (var chunk in chunks)
         {

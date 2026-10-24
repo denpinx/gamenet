@@ -53,6 +53,40 @@ public sealed class Session
     public long SnapshotsSent { get; set; }
     public uint ClientTick { get; set; }
     public int TickDrift { get; set; }
+    public long ThrottledTicks { get; private set; }
+
+    private double _sendBudget;
+    private long _budgetMs;
+
+    /// <summary>Token bucket used by the server to cap per-session outbound bandwidth.</summary>
+    internal bool TryConsume(long bytes, int bytesPerSecond, long now)
+    {
+        if (bytesPerSecond <= 0) return true;
+        if (_budgetMs == 0)
+        {
+            _budgetMs = now;
+            _sendBudget = bytesPerSecond;
+        }
+        else
+        {
+            var elapsed = (now - _budgetMs) / 1000.0;
+            _budgetMs = now;
+            _sendBudget = Math.Min(bytesPerSecond, _sendBudget + elapsed * bytesPerSecond);
+        }
+
+        if (bytes > _sendBudget)
+        {
+            // If the frame itself is larger than one second of budget, wait for a full bucket
+            // and then let it through once; otherwise the session would never make progress.
+            if (_sendBudget < bytesPerSecond)
+            {
+                ThrottledTicks++;
+                return false;
+            }
+        }
+        _sendBudget = Math.Max(0, _sendBudget - bytes);
+        return true;
+    }
 
     /// <summary>Per-collection delta baseline: collection id -> entity id -> last sent state.</summary>
     public readonly Dictionary<byte, Dictionary<int, EntityState>> Known = new();

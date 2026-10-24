@@ -13,6 +13,9 @@ public sealed class ServerOptions
     /// <summary>Client tick drift (in ticks) tolerated before snapping.</summary>
     public int TickSyncTolerance { get; set; } = 2;
 
+    /// <summary>Per-session outbound cap in bytes/second; 0 = unlimited.</summary>
+    public int MaxBytesPerSecondPerSession { get; set; }
+
     /// <summary>How long a disconnected session keeps its token/subscriptions for resume.</summary>
     public double ResumeGraceSeconds { get; set; } = 30;
     public int MaxChunkPayload { get; set; } = SnapshotCodec.MaxChunkPayload;
@@ -474,7 +477,7 @@ public sealed class GameServer
         {
             if (_typedCollections.TryGetValue(collectionId, out var typed))
             {
-                typed.Replicate(session, _version, (uint)Environment.TickCount64);
+                typed.Replicate(session, _version, (uint)Environment.TickCount64, Options.MaxBytesPerSecondPerSession);
                 continue;
             }
             if (_collections.TryGetValue(collectionId, out var collection))
@@ -525,6 +528,9 @@ public sealed class GameServer
         if (deltas.Count == 0) return 0;
 
         var chunks = SnapshotCodec.Build(_version, deltas, (uint)Environment.TickCount64, collectionId);
+        var totalBytes = chunks.Sum(c => (long)c.Length);
+        if (!session.TryConsume(totalBytes, Options.MaxBytesPerSecondPerSession, Environment.TickCount64)) return 0;
+
         var delivered = true;
         foreach (var chunk in chunks)
         {
