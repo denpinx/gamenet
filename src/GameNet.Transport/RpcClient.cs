@@ -35,7 +35,14 @@ public sealed class RpcGroupClient
 /// <summary>Small request/response client over the reliable RPC channel (channel 1).</summary>
 public sealed class RpcClient : IDisposable
 {
-    private readonly UdpClientTransport _transport;
+    private UdpClientTransport _transport;
+    private readonly ImpairmentOptions? _impairment;
+    private readonly double _tickRate;
+    private readonly HashSet<byte> _subscribedIds = new();
+    private int _hostPort;
+    private int _port;
+    private int _timeoutMs = 5000;
+    private bool _resubscribeOnRegistry;
     private readonly ConcurrentDictionary<uint, TaskCompletionSource<RpcReply>> _pending = new();
     private readonly ConcurrentDictionary<string, byte> _collections = new();
     private readonly ConcurrentDictionary<byte, ITypedWorld> _typedWorlds = new();
@@ -43,8 +50,8 @@ public sealed class RpcClient : IDisposable
     private readonly HashSet<string> _pendingSubscriptions = new(StringComparer.OrdinalIgnoreCase);
     private bool _built;
     private bool _manualTick;
-    private readonly TaskCompletionSource<string> _tokenTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly TaskCompletionSource<bool> _resumeTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private TaskCompletionSource<string> _tokenTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private TaskCompletionSource<bool> _resumeTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private string? _sessionToken;
     private readonly TickClock _clock;
     private long _lastClockMs;
@@ -54,6 +61,8 @@ public sealed class RpcClient : IDisposable
 
     internal RpcClient(ImpairmentOptions? impairment = null, double tickRate = 30)
     {
+        _impairment = impairment;
+        _tickRate = tickRate;
         _transport = new UdpClientTransport(impairment);
         _clock = new TickClock(tickRate);
         _lastClockMs = Environment.TickCount64;
@@ -68,9 +77,17 @@ public sealed class RpcClient : IDisposable
     /// <summary>Replicated world for channels subscribed via <see cref="Subscribe"/>.</summary>
     public ClientWorld World { get; } = new();
 
-    public bool Subscribe(byte collection) => SendControl(MessageType.Subscribe, collection);
+    public bool Subscribe(byte collection)
+    {
+        _subscribedIds.Add(collection);
+        return SendControl(MessageType.Subscribe, collection);
+    }
 
-    public bool Unsubscribe(byte collection) => SendControl(MessageType.Unsubscribe, collection);
+    public bool Unsubscribe(byte collection)
+    {
+        _subscribedIds.Remove(collection);
+        return SendControl(MessageType.Unsubscribe, collection);
+    }
 
     /// <summary>Subscribes by name. Before Build it is queued; after Build it resolves immediately.</summary>
     public bool Subscribe(string name, int timeoutMs = 2000)
@@ -146,6 +163,40 @@ public sealed class RpcClient : IDisposable
         return _transport.Send(1, writer.Written);
     }
 
+    /// <summary>Reconnect with exponential backoff, re-sending the resume token and subscriptions.</summary>
+    public async Task<bool> ReconnectAsync(string host, int port, int attempts = 5, int initialDelayMs = 200, int maxDelayMs = 2000)
+    {
+        if (!_built) throw new InvalidOperationException("client is not built");
+        _running = false;
+        try { _pump?.Join(300); } catch { }
+        _transport.Dispose();
+
+        var delay = initialDelayMs;
+        for (var attempt = 0; attempt < attempts; attempt++)
+        {
+            _transport = new UdpClientTransport(_impairment);
+            if (_transport.Connect(host, port, _timeoutMs))
+            {
+                _tokenTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _resumeTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _resubscribeOnRegistry = true;
+                if (!_manualTick)
+                {
+                    _running = true;
+                    _pump = new Thread(PumpLoop) { IsBackground = true, Name = "rpc-client-pump" };
+                    _pump.Start();
+                }
+                if (_sessionToken is not null) SendResume(_sessionToken);
+                return true;
+            }
+
+            _transport.Dispose();
+            await Task.Delay(delay);
+            delay = Math.Min(maxDelayMs, delay * 2);
+        }
+        return false;
+    }
+
     internal bool SendResume(string token)
     {
         var writer = new ByteWriter(64);
@@ -180,6 +231,9 @@ public sealed class RpcClient : IDisposable
         if (!_transport.Connect(host, port, timeoutMs)) return false;
         _built = true;
         _manualTick = manualTick;
+        _hostPort = host.GetHashCode() ^ port;
+        _port = port;
+        _timeoutMs = timeoutMs;
         _lastClockMs = Environment.TickCount64;
         if (!manualTick)
         {
@@ -318,6 +372,12 @@ public sealed class RpcClient : IDisposable
             if (!_collections.TryGetValue(name, out var id)) continue;
             SendControl(MessageType.Subscribe, id);
             _pendingSubscriptions.Remove(name);
+        }
+
+        if (_resubscribeOnRegistry)
+        {
+            foreach (var id in _subscribedIds) SendControl(MessageType.Subscribe, id);
+            _resubscribeOnRegistry = false;
         }
     }
 

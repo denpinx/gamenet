@@ -20,9 +20,13 @@ public readonly partial record struct MatchView(
 public sealed class TttClient : IDisposable
 {
     private RpcClient? _rpc;
+    private string _host = "127.0.0.1";
+    private int _port;
 
     public bool Connect(string host, int port)
     {
+        _host = host;
+        _port = port;
         try
         {
             _rpc = new RpcClientBuilder()
@@ -40,6 +44,9 @@ public sealed class TttClient : IDisposable
     }
 
     public TypedWorld<MatchBoard> Matches { get; private set; } = null!;
+
+    public Task<bool> ReconnectAsync() =>
+        _rpc is null ? Task.FromResult(false) : _rpc.ReconnectAsync(_host, _port);
 
     public ClientWorld World => _rpc!.World;
 

@@ -121,7 +121,21 @@ static async Task PlayAsync(TttClient client)
     MatchBoard? last = null;
     while (true)
     {
-        var board = await NextBoardAsync(client, updates.Reader, 3000);
+        MatchBoard board;
+        try
+        {
+            board = await NextBoardAsync(client, updates.Reader, 3000);
+        }
+        catch (Exception ex) when (ex is TimeoutException or RpcException or InvalidOperationException)
+        {
+            Console.WriteLine($"[reconnect] {ex.Message}");
+            if (!await client.ReconnectAsync())
+            {
+                Console.WriteLine("[reconnect] 失败，退出对局");
+                return;
+            }
+            continue;
+        }
         if (last is { } previous && SameBoard(previous, board)) continue;
 
         PrintBoard(board, mySymbol, opponent);
@@ -138,7 +152,21 @@ static async Task PlayAsync(TttClient client)
             Console.Write("轮到你，落子 (0-8)：");
             var input = Console.ReadLine();
             if (!int.TryParse(input, out var cell)) continue;
-            var moveResult = await client.MoveAsync(cell);
+            Ack moveResult;
+            try
+            {
+                moveResult = await client.MoveAsync(cell);
+            }
+            catch (Exception ex) when (ex is TimeoutException or RpcException or InvalidOperationException)
+            {
+                Console.WriteLine($"[reconnect] {ex.Message}");
+                if (!await client.ReconnectAsync())
+                {
+                    Console.WriteLine("[reconnect] 失败，退出对局");
+                    return;
+                }
+                continue;
+            }
             if (!moveResult.Ok) Console.WriteLine(moveResult.Message);
         }
     }

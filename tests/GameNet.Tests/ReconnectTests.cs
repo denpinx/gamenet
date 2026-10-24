@@ -49,6 +49,42 @@ public class ReconnectTests
     }
 
     [Fact]
+    public async Task Client_ReconnectsWithBackoff_AndResumes()
+    {
+        using var transport = new UdpServerTransport(0) { IdleTimeoutMs = 200 };
+        var server = new GameServer(transport, new ServerOptions
+        {
+            AutoSubscribe = false,
+            AoiRadius = 0,
+            ResumeGraceSeconds = 5,
+        });
+        var players = server.RegisterTypedCollection<PlayerEntity>("players");
+        players.Spawn(1, new PlayerEntity { Id = 1, Name = "alice", X = 4 });
+        server.Start(autoTick: true, tickRate: 60);
+        try
+        {
+            using var client = new RpcClientBuilder()
+                .AddTypedCollection<PlayerView>("players")
+                .Subscribe("players")
+                .Build("127.0.0.1", transport.Port);
+
+            var world = client.Typed<PlayerView>("players");
+            var token = await client.WaitForSessionTokenAsync();
+            var sessionId = server.Sessions.Values.Single().Id;
+            await PumpUntilAsync(server, () => world.Count == 1);
+
+            Assert.False(string.IsNullOrEmpty(token));
+            Assert.True(server.Sessions.Values.Any(s => s.ResumeToken == token));
+
+            Assert.True(await client.ReconnectAsync("127.0.0.1", transport.Port));
+            Assert.True(await client.WaitForResumeAsync(3000));
+            await PumpUntilAsync(server, () => world.Count == 1);
+            Assert.Equal(sessionId, server.Sessions.Values.Single().Id);
+            Assert.False(string.IsNullOrEmpty(token));
+        }
+        finally { server.StopAutoTick(); }
+    }
+    [Fact]
     public async Task InvalidToken_IsRejected()
     {
         using var transport = new UdpServerTransport(0);

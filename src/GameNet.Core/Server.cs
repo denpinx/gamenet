@@ -359,12 +359,22 @@ public sealed class GameServer
                 {
                     var length = (int)reader.ReadVarUInt();
                     var token = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(length));
-                    if (_suspended.Remove(token, out var resumed))
+
+                    Session? resumed = null;
+                    if (!_suspended.Remove(token, out resumed))
+                    {
+                        lock (_sessions)
+                            resumed = _sessions.Values.FirstOrDefault(s =>
+                                s.Id != session.Id && string.Equals(s.ResumeToken, token, StringComparison.OrdinalIgnoreCase));
+                    }
+
+                    if (resumed is not null)
                     {
                         SessionLeft?.Invoke(session); // discard the transient connection session
                         lock (_sessions)
                         {
                             _sessions.Remove(session.Id);
+                            _sessions.Remove(resumed.Peer.Id);
                             resumed.Rebind(session.Peer);
                             resumed.ClearKnown();
                             resumed.HasAvatar = false;
