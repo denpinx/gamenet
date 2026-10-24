@@ -75,25 +75,19 @@ static async Task RunClientAsync(string host, int port)
 /// <summary>The whole server: one transport, one typed collection, one RPC group.</summary>
 public sealed class MinimalServer : IDisposable
 {
-    private readonly UdpServerTransport _transport;
-    private readonly GameServer _server;
+    private readonly UdpGameServerHost _host;
 
     public MinimalServer(int port)
     {
-        _transport = new UdpServerTransport(port);
-        _server = new GameServer(_transport, new ServerOptions { AutoSubscribe = false, AoiRadius = 0 });
-        var players = _server.RegisterTypedCollection<Player>("players");
-        _server.RpcGroups.AddGroup(new HelloApi(players));
-        _server.Start(autoTick: true, tickRate: 30);
+        _host = new UdpGameServerHost(port, new ServerOptions { AutoSubscribe = false, AoiRadius = 0 });
+        var players = _host.Server.RegisterTypedCollection<Player>("players");
+        _host.Server.RpcGroups.AddGroup(new HelloApi(players));
+        _host.Start(autoTick: true, tickRate: 30);
     }
 
-    public int Port => _transport.Port;
+    public int Port => _host.Port;
 
-    public void Dispose()
-    {
-        _server.StopAutoTick();
-        _transport.Dispose();
-    }
+    public void Dispose() => _host.Dispose();
 }
 
 /// <summary>Server-side authoritative entity: mutable class, generated codec.</summary>

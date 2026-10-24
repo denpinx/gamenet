@@ -240,6 +240,32 @@ public class IntegrationSmokeTests
         Assert.False(server.AutoTickRunning);
         Assert.Equal(20, world.EntityCount);
     }
+    [Fact]
+    public async Task Host_WrapsTransportAndServer()
+    {
+        using var host = new UdpGameServerHost(0, new ServerOptions { AoiRadius = 0, AutoSubscribe = true });
+        host.Server.Entities.Spawn(EntityState.Create(1, EntityKind.Prop, 5, 5));
+        host.Start();
+
+        using var client = new UdpClientTransport();
+        Assert.True(client.Connect("127.0.0.1", host.Port));
+        var world = new ClientWorld();
+
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline && world.EntityCount == 0)
+        {
+            host.Server.Tick(1f / 30f);
+            client.Poll();
+            while (client.TryDequeue(out var packet))
+            {
+                if (packet.Channel == 0 && SnapshotCodec.TryRead(packet.Payload, out var chunk))
+                    world.OnChunk(chunk);
+            }
+            await Task.Delay(5);
+        }
+
+        Assert.Equal(1, world.EntityCount);
+    }
     private static void Pump(UdpClientTransport transport, ClientWorld world)
     {
         transport.Poll();
