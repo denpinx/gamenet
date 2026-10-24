@@ -95,9 +95,14 @@ public sealed class RpcClient : IDisposable
 
     public TypedWorld<T> Typed<T>(string name) where T : class, IEntityCodec<T>
     {
-        if (!_collections.TryGetValue(name, out var id) || !_typedWorlds.TryGetValue(id, out var world))
-            throw new KeyNotFoundException($"typed collection '{name}' is not registered");
-        return (TypedWorld<T>)world;
+        if (_collections.TryGetValue(name, out var id) && _typedWorlds.TryGetValue(id, out var world))
+            return (TypedWorld<T>)world;
+        foreach (var pending in _pendingTyped)
+        {
+            if (string.Equals(pending.Name, name, StringComparison.OrdinalIgnoreCase))
+                return (TypedWorld<T>)pending.World;
+        }
+        throw new KeyNotFoundException($"typed collection '{name}' is not registered");
     }
 
     public bool TryGetCollectionId(string name, out byte id) => _collections.TryGetValue(name, out id);

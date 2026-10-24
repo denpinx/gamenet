@@ -19,36 +19,46 @@ public readonly partial record struct MatchView(
 /// <summary>Thin typed wrapper — connection is one line, each call is one line.</summary>
 public sealed class TttClient : IDisposable
 {
-    private readonly RpcClient _rpc = new();
+    private RpcClient? _rpc;
 
     public bool Connect(string host, int port)
     {
-        Matches = _rpc.RegisterTypedCollection<MatchBoard>("matches");
-        _rpc.Subscribe("matches");   // queued before Build, resolved by the server registry
-        return _rpc.Build(host, port);
+        try
+        {
+            _rpc = new RpcClientBuilder()
+                .AddTypedCollection<MatchBoard>("matches")
+                .Subscribe("matches")
+                .Build(host, port);
+            Matches = _rpc.Typed<MatchBoard>("matches");
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            _rpc = null;
+            return false;
+        }
     }
 
     public TypedWorld<MatchBoard> Matches { get; private set; } = null!;
 
-    public ClientWorld World => _rpc.World;
+    public ClientWorld World => _rpc!.World;
 
-    public bool Subscribe(string name) => _rpc.Subscribe(name);
-
+    public bool Subscribe(string name) => _rpc!.Subscribe(name);
 
     public Task<Ack> RegisterAsync(string username, string password) =>
-        _rpc.CallAsync<RegisterRequest, Ack>(TttMethods.Register, new(username, password));
+        _rpc!.CallAsync<RegisterRequest, Ack>(TttMethods.Register, new(username, password));
 
     public Task<Ack> LoginAsync(string username, string password) =>
-        _rpc.CallAsync<RegisterRequest, Ack>(TttMethods.Login, new(username, password));
+        _rpc!.CallAsync<RegisterRequest, Ack>(TttMethods.Login, new(username, password));
 
     public Task<QueueResult> QueueAsync() =>
-        _rpc.CallAsync<Empty, QueueResult>(TttMethods.Queue, Empty.Value);
+        _rpc!.CallAsync<Empty, QueueResult>(TttMethods.Queue, Empty.Value);
 
     public Task<MatchView> StateAsync() =>
-        _rpc.CallAsync<Empty, MatchView>(TttMethods.State, Empty.Value);
+        _rpc!.CallAsync<Empty, MatchView>(TttMethods.State, Empty.Value);
 
     public Task<Ack> MoveAsync(int cell) =>
-        _rpc.CallAsync<MoveRequest, Ack>(TttMethods.Move, new((byte)cell));
+        _rpc!.CallAsync<MoveRequest, Ack>(TttMethods.Move, new((byte)cell));
 
-    public void Dispose() => _rpc.Dispose();
+    public void Dispose() => _rpc?.Dispose();
 }

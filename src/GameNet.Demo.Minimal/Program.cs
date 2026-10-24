@@ -42,16 +42,22 @@ static async Task RunDemoAsync()
 
 static async Task RunClientAsync(string host, int port)
 {
-    using var client = new RpcClient();
-
-    // Build mode: collection types are registered before Build, then frozen.
-    var players = client.RegisterTypedCollection<PlayerView>("players");
-    client.Subscribe("players");
-    if (!client.Build(host, port))
+    RpcClient client;
+    try
     {
-        Console.WriteLine("connect failed");
+        client = new RpcClientBuilder()
+            .AddTypedCollection<PlayerView>("players")
+            .Subscribe("players")
+            .Build(host, port);
+    }
+    catch (InvalidOperationException ex)
+    {
+        Console.WriteLine(ex.Message);
         return;
     }
+
+    using var _ = client;
+    var players = client.Typed<PlayerView>("players");
 
     var arrival = new TaskCompletionSource<PlayerView>(TaskCreationOptions.RunContinuationsAsynchronously);
     using var subscription = players.OnChanged(e =>

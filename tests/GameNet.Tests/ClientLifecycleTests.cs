@@ -40,6 +40,31 @@ public class ClientLifecycleTests
     }
 
     [Fact]
+    public async Task Builder_ConfiguresCollectionsAndSubscriptions()
+    {
+        using var transport = new UdpServerTransport(0);
+        var server = new GameServer(transport, new ServerOptions { AutoSubscribe = false, AoiRadius = 0 });
+        var players = server.RegisterTypedCollection<PlayerEntity>("players");
+        players.Spawn(1, new PlayerEntity { Id = 1, Name = "alice" });
+        server.Start();
+
+        using var client = new RpcClientBuilder()
+            .AddTypedCollection<PlayerView>("players")
+            .Subscribe("players")
+            .Build("127.0.0.1", transport.Port, manualTick: true);
+
+        var world = client.Typed<PlayerView>("players");
+        var deadline = DateTime.UtcNow.AddSeconds(6);
+        while (DateTime.UtcNow < deadline && world.Count == 0)
+        {
+            server.Tick(1f / 30f);
+            client.Tick();
+            await Task.Delay(5);
+        }
+
+        Assert.Equal("alice", world.Entities[1].Name);
+    }
+    [Fact]
     public void Tick_OutsideManualMode_Throws()
     {
         using var transport = new UdpServerTransport(0);
