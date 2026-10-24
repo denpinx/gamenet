@@ -5,8 +5,42 @@ using Xunit;
 
 namespace GameNet.Tests;
 
+[Entity("named")]
+public sealed partial class NamedEntity
+{
+    [Key] public string Name { get; set; } = string.Empty;
+    public int X { get; set; }
+}
 public class TypedCollectionPersistenceTests
 {
+    [Fact]
+    public void TypedCollection_StringKey_SavesAndLoads()
+    {
+        var db = Path.Combine(Path.GetTempPath(), $"typed-{Guid.NewGuid():N}.db");
+        try
+        {
+            using var transport = new UdpServerTransport(0);
+            transport.Start();
+            var server = new GameServer(transport, new ServerOptions { AutoSubscribe = false, AoiRadius = 0 });
+            var named = server.RegisterTypedCollection<NamedEntity>("named");
+            var store = named.UseSqlite($"Data Source={db}");
+
+            named.Spawn("alice", new NamedEntity { Name = "alice", X = 1 });
+            Assert.Equal(1, store.Load("alice")!.X);
+
+            named.Save("bob", new NamedEntity { Name = "bob", X = 2 });
+            Assert.Equal(2, store.Load("bob")!.X);
+            Assert.True(named.TryGet("bob", out var bob));
+            Assert.Equal("bob", bob.Name);
+
+            named.Despawn("alice");
+            Assert.Null(store.Load("alice"));
+        }
+        finally
+        {
+            try { File.Delete(db); } catch { }
+        }
+    }
     [Fact]
     public void TypedCollection_SaveAtSpecificId()
     {

@@ -7,12 +7,12 @@ namespace GameNet.Persistence;
 public sealed class SqliteTypedCollectionStore<T> : ITypedCollectionStore<T> where T : class, new()
 {
     private readonly SqliteStore<T> _store;
-    private readonly Func<T, int> _keyOf;
+    private readonly Func<T, TypedKey> _keyOf;
 
     public SqliteTypedCollectionStore(
         string connectionString,
         PersistenceOptions? options = null,
-        Func<T, int>? keyOf = null)
+        Func<T, TypedKey>? keyOf = null)
     {
         _store = new SqliteStore<T>(connectionString, options);
         _keyOf = keyOf ?? DefaultKey;
@@ -22,19 +22,26 @@ public sealed class SqliteTypedCollectionStore<T> : ITypedCollectionStore<T> whe
 
     public void EnsureSchema() => _store.EnsureSchema();
 
-    public void Save(int id, T value) => _store.Save(value);
+    public void Save(TypedKey id, T value) => _store.Save(value);
 
-    public T? Load(int id) => _store.Load(id);
+    public T? Load(TypedKey id) => _store.Load(ToObject(id));
 
-    public bool Delete(int id) => _store.Delete(id);
+    public bool Delete(TypedKey id) => _store.Delete(ToObject(id));
 
-    public IReadOnlyList<(int Id, T Value)> LoadAll() =>
+    public IReadOnlyList<(TypedKey Id, T Value)> LoadAll() =>
         _store.LoadAll().Select(value => (_keyOf(value), value)).ToList();
 
-    public IReadOnlyList<(int Id, T Value)> Query(Func<T, bool> predicate) =>
+    public IReadOnlyList<(TypedKey Id, T Value)> Query(Func<T, bool> predicate) =>
         _store.LoadAll().Where(predicate).Select(value => (_keyOf(value), value)).ToList();
 
-    private static int DefaultKey(T item)
+    private static object ToObject(TypedKey key) => key.Kind switch
+    {
+        TypedKeyKind.String => key.StringValue ?? string.Empty,
+        TypedKeyKind.Guid => key.GuidValue,
+        _ => key.IntValue,
+    };
+
+    private static TypedKey DefaultKey(T item)
     {
         var properties = typeof(T).GetProperties(BindingFlags.Public | BindingFlags.Instance);
         var property = properties.FirstOrDefault(p => p.GetCustomAttribute<KeyAttribute>() is not null)
@@ -42,9 +49,13 @@ public sealed class SqliteTypedCollectionStore<T> : ITypedCollectionStore<T> whe
                        ?? throw new InvalidOperationException($"{typeof(T).Name} needs a [Key] property or Id");
 
         var value = property.GetValue(item);
-        return value is int id
-            ? id
-            : throw new InvalidOperationException($"{typeof(T).Name}.{property.Name} must be int for a typed collection store");
+        return value switch
+        {
+            int id => id,
+            string text => text,
+            Guid guid => guid,
+            _ => throw new InvalidOperationException($"{typeof(T).Name}.{property.Name} must be int, string or Guid"),
+        };
     }
 }
 
@@ -58,7 +69,7 @@ public static class TypedCollectionPersistenceExtensions
         this TypedCollection<T> collection,
         string connectionString,
         PersistenceOptions? options = null,
-        Func<T, int>? keyOf = null,
+        Func<T, TypedKey>? keyOf = null,
         bool autoPersist = true) where T : class, IEntityCodec<T>, new()
     {
         var store = new SqliteTypedCollectionStore<T>(connectionString, options, keyOf);

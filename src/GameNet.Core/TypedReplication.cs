@@ -2,7 +2,7 @@ namespace GameNet.Core;
 
 public struct TypedEntry
 {
-    public int Id;
+    public TypedKey Id;
     public DeltaOp Op;
     public ulong Mask;
     public byte[] Payload;
@@ -30,7 +30,7 @@ public static class TypedSnapshotCodec
         foreach (var entry in entries)
         {
             var writer = new ByteWriter(64);
-            writer.WriteVarInt(entry.Id);
+            WriteKey(writer, entry.Id);
             writer.WriteByte((byte)entry.Op);
             if (entry.Op == DeltaOp.Update) writer.WriteVarUInt((uint)entry.Mask);
             if (entry.Op != DeltaOp.Remove)
@@ -63,6 +63,39 @@ public static class TypedSnapshotCodec
         return chunks;
     }
 
+    private static void WriteKey(ByteWriter writer, TypedKey key)
+    {
+        writer.WriteByte((byte)key.Kind);
+        switch (key.Kind)
+        {
+            case TypedKeyKind.String:
+            {
+                var bytes = System.Text.Encoding.UTF8.GetBytes(key.StringValue ?? string.Empty);
+                writer.WriteVarUInt((uint)bytes.Length);
+                writer.WriteBytes(bytes);
+                break;
+            }
+            case TypedKeyKind.Guid:
+                writer.WriteBytes(key.GuidValue.ToByteArray());
+                break;
+            default:
+                writer.WriteVarInt(key.IntValue);
+                break;
+        }
+    }
+
+    private static TypedKey ReadKey(ref ByteReader reader)
+    {
+        var kind = (TypedKeyKind)reader.ReadByte();
+        return kind switch
+        {
+            TypedKeyKind.String => System.Text.Encoding.UTF8.GetString(
+                reader.ReadBytes((int)reader.ReadVarUInt()).ToArray()),
+            TypedKeyKind.Guid => new Guid(reader.ReadBytes(16)),
+            _ => reader.ReadVarInt(),
+        };
+    }
+
     private static byte[] WriteChunk(byte collection, uint version, uint serverTimeMs, int index, int count, List<byte[]> entries)
     {
         var writer = new ByteWriter(256);
@@ -93,7 +126,7 @@ public static class TypedSnapshotCodec
         var entryCount = (int)reader.ReadVarUInt();
         for (var i = 0; i < entryCount; i++)
         {
-            var id = reader.ReadVarInt();
+            var id = ReadKey(ref reader);
             var op = (DeltaOp)reader.ReadByte();
             var entry = new TypedEntry { Id = id, Op = op };
             if (op == DeltaOp.Update) entry.Mask = reader.ReadVarUInt();
@@ -125,8 +158,8 @@ public interface ITypedCollection
 /// <summary>Server-side store of typed entities with per-session delta baselines.</summary>
 public sealed class TypedCollection<T> : ITypedCollection where T : class, IEntityCodec<T>
 {
-    private readonly Dictionary<int, T> _items = new();
-    private readonly Dictionary<int, Dictionary<int, T>> _known = new();
+    private readonly Dictionary<TypedKey, T> _items = new();
+    private readonly Dictionary<TypedKey, Dictionary<TypedKey, T>> _known = new();
     private bool _suppressPersist;
 
     internal TypedCollection(byte id, string name)
@@ -138,7 +171,7 @@ public sealed class TypedCollection<T> : ITypedCollection where T : class, IEnti
     public byte Id { get; }
     public string Name { get; }
     public int Count => _items.Count;
-    public IReadOnlyDictionary<int, T> Items => _items;
+    public IReadOnlyDictionary<TypedKey, T> Items => _items;
 
     public Func<Session, T, bool>? Filter { get; set; }
     public Action<double>? OnTick { get; set; }
@@ -153,20 +186,20 @@ public sealed class TypedCollection<T> : ITypedCollection where T : class, IEnti
         store.EnsureSchema();
     }
 
-    public void Spawn(int id, T value)
+    public void Spawn(TypedKey id, T value)
     {
         _items[id] = value;
         if (AutoPersist && !_suppressPersist) PersistenceStore?.Save(id, value);
     }
 
-    public bool Despawn(int id)
+    public bool Despawn(TypedKey id)
     {
         var removed = _items.Remove(id);
         if (removed && AutoPersist && !_suppressPersist) PersistenceStore?.Delete(id);
         return removed;
     }
 
-    public void Save(int id)
+    public void Save(TypedKey id)
     {
         if (PersistenceStore is null) throw new InvalidOperationException($"collection {Name} has no persistence store");
         if (!_items.TryGetValue(id, out var value)) throw new KeyNotFoundException($"entity {id} is not in collection {Name}");
@@ -174,14 +207,14 @@ public sealed class TypedCollection<T> : ITypedCollection where T : class, IEnti
     }
 
     /// <summary>Writes (and inserts/replaces) the value at a specific entity id, regardless of autoPersist.</summary>
-    public void Save(int id, T value)
+    public void Save(TypedKey id, T value)
     {
         if (PersistenceStore is null) throw new InvalidOperationException($"collection {Name} has no persistence store");
         _items[id] = value;
         PersistenceStore.Save(id, value);
     }
 
-    public T? Load(int id)
+    public T? Load(TypedKey id)
     {
         if (PersistenceStore is null) throw new InvalidOperationException($"collection {Name} has no persistence store");
         var value = PersistenceStore.Load(id);
@@ -218,7 +251,7 @@ public sealed class TypedCollection<T> : ITypedCollection where T : class, IEnti
         finally { _suppressPersist = false; }
         return rows.Count;
     }
-    public bool TryGet(int id, out T value) => _items.TryGetValue(id, out value!);
+    public bool TryGet(TypedKey id, out T value) => _items.TryGetValue(id, out value!);
 
     public void Tick(double deltaSeconds) => OnTick?.Invoke(deltaSeconds);
 
@@ -228,12 +261,12 @@ public sealed class TypedCollection<T> : ITypedCollection where T : class, IEnti
     {
         if (!_known.TryGetValue(session.Id, out var known))
         {
-            known = new Dictionary<int, T>();
+            known = new Dictionary<TypedKey, T>();
             _known[session.Id] = known;
         }
 
-        var visible = new List<(int Id, T Value)>(Math.Min(_items.Count, 512));
-        var visibleIds = new HashSet<int>();
+        var visible = new List<(TypedKey Id, T Value)>(Math.Min(_items.Count, 512));
+        var visibleIds = new HashSet<TypedKey>();
         foreach (var pair in _items)
         {
             if (Filter is not null && !Filter(session, pair.Value)) continue;
@@ -311,14 +344,14 @@ public interface ITypedWorld
 /// <summary>Client-side view of a typed collection; T may be a record while the server uses a class.</summary>
 public sealed class TypedWorld<T> : ITypedWorld where T : class, IEntityCodec<T>
 {
-    private readonly Dictionary<int, T> _entities = new();
-    private readonly Dictionary<int, uint> _ticks = new();
+    private readonly Dictionary<TypedKey, T> _entities = new();
+    private readonly Dictionary<TypedKey, uint> _ticks = new();
     private uint _lastVersion;
 
     public TypedWorld(byte collection) => Collection = collection;
 
     public byte Collection { get; set; }
-    public IReadOnlyDictionary<int, T> Entities => _entities;
+    public IReadOnlyDictionary<TypedKey, T> Entities => _entities;
     public int Count => _entities.Count;
     public long ChunksApplied { get; private set; }
     public bool NeedsResync { get; private set; }

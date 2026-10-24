@@ -88,6 +88,31 @@ public class TypedCollectionTests
         Assert.True(reader.End);
     }
     [Fact]
+    public async Task TypedCollection_StringKeys_RoundTrip()
+    {
+        using var transport = new UdpServerTransport(0);
+        var server = new GameServer(transport, new ServerOptions { AutoSubscribe = false, AoiRadius = 0 });
+        var players = server.RegisterTypedCollection<PlayerEntity>("players");
+        players.Spawn("alice", new PlayerEntity { Id = 1, Name = "alice", X = 1 });
+        server.Start();
+
+        using var client = new RpcClient();
+        var world = client.RegisterTypedCollection<PlayerView>("players");
+        Assert.True(client.Connect("127.0.0.1", transport.Port));
+        client.Subscribe("players");
+
+        await PumpUntilAsync(server, () => world.Count == 1);
+        Assert.Equal("alice", world.Entities["alice"].Name);
+
+        players.Spawn("bob", new PlayerEntity { Id = 2, Name = "bob", X = 2 });
+        await PumpUntilAsync(server, () => world.Count == 2);
+        Assert.Equal(2, world.Entities["bob"].Id);
+
+        players.Despawn("alice");
+        await PumpUntilAsync(server, () => world.Count == 1);
+        Assert.False(world.Entities.ContainsKey("alice"));
+    }
+    [Fact]
     public async Task TypedCollection_InPlaceMutation_Replicates()
     {
         using var transport = new UdpServerTransport(0);

@@ -10,7 +10,7 @@ public enum ChangeKind
 /// <summary>One applied change for the untyped EntityState world.</summary>
 public readonly struct EntityChange
 {
-    public int Id { get; init; }
+    public TypedKey Id { get; init; }
     public ChangeKind Kind { get; init; }
     public EntityState Previous { get; init; }
     public EntityState Current { get; init; }
@@ -26,7 +26,7 @@ public sealed class CollectionChanged
 /// <summary>One applied change for a typed world. Previous is the old value for record views.</summary>
 public readonly struct TypedEntityChange<T>
 {
-    public int Id { get; init; }
+    public TypedKey Id { get; init; }
     public ChangeKind Kind { get; init; }
     public T? Previous { get; init; }
     public T? Current { get; init; }

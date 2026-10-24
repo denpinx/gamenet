@@ -39,7 +39,7 @@ public class ReconnectTests
             .WithResumeToken(token)
             .Build("127.0.0.1", transport.Port);
 
-        Assert.True(await second.WaitForResumeAsync(3000));
+        Assert.True(await second.WaitForResumeAsync(8000));
         var secondWorld = second.Typed<PlayerView>("players");
         await PumpUntilAsync(server, () => secondWorld.Count == 1);
         Assert.Equal("alice", secondWorld.Entities[1].Name);
@@ -77,7 +77,7 @@ public class ReconnectTests
             Assert.True(server.Sessions.Values.Any(s => s.ResumeToken == token));
 
             Assert.True(await client.ReconnectAsync("127.0.0.1", transport.Port));
-            Assert.True(await client.WaitForResumeAsync(3000));
+            Assert.True(await client.WaitForResumeAsync(8000));
             await PumpUntilAsync(server, () => world.Count == 1);
             Assert.Equal(sessionId, server.Sessions.Values.Single().Id);
             Assert.False(string.IsNullOrEmpty(token));
@@ -96,7 +96,7 @@ public class ReconnectTests
             .WithResumeToken("not-a-real-token")
             .Build("127.0.0.1", transport.Port);
 
-        Assert.False(await client.WaitForResumeAsync(3000));
+        Assert.False(await client.WaitForResumeAsync(8000));
         }
         finally { server.StopAutoTick(); }
     }

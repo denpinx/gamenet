@@ -7,11 +7,11 @@ namespace GameNet.Core;
 public interface ITypedCollectionStore<T> where T : class
 {
     void EnsureSchema();
-    void Save(int id, T value);
-    T? Load(int id);
-    bool Delete(int id);
-    IReadOnlyList<(int Id, T Value)> LoadAll();
+    void Save(TypedKey id, T value);
+    T? Load(TypedKey id);
+    bool Delete(TypedKey id);
+    IReadOnlyList<(TypedKey Id, T Value)> LoadAll();
 
     /// <summary>Returns matching rows (id + value). Implementations may filter in memory or SQL.</summary>
-    IReadOnlyList<(int Id, T Value)> Query(Func<T, bool> predicate);
+    IReadOnlyList<(TypedKey Id, T Value)> Query(Func<T, bool> predicate);
 }
