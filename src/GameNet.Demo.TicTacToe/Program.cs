@@ -1,3 +1,4 @@
+using System.Threading.Channels;
 using GameNet.Core;
 using GameNet.Demo.TicTacToe;
 
@@ -94,7 +95,6 @@ static async Task QueueAndPlayAsync(TttClient client)
             var view = await client.StateAsync();
             if (view.Status == MatchStatus.Playing)
             {
-                Print(view);
                 await PlayAsync(client);
                 return;
             }
@@ -105,39 +105,76 @@ static async Task QueueAndPlayAsync(TttClient client)
 
 static async Task PlayAsync(TttClient client)
 {
-    byte lastTurn = 255;
-    var reportedCollection = false;
+    var updates = Channel.CreateUnbounded<MatchBoard>();
+    using var subscription = client.Matches.OnChanged(e =>
+    {
+        foreach (var change in e.Changes)
+            if (change.Kind != ChangeKind.Removed && change.Current is { } board)
+                updates.Writer.TryWrite(board);
+    });
+
+    var view = await client.StateAsync();
+    var mySymbol = view.MySymbol;
+    var opponent = view.Opponent;
+    Console.WriteLine($"对局 #{view.MatchId}：你={Mark(mySymbol)} 对手={opponent}");
+
+    MatchBoard? last = null;
     while (true)
     {
-        var view = await client.StateAsync();
-        if (view.Status == MatchStatus.Playing)
+        var board = await NextBoardAsync(client, updates.Reader, 3000);
+        if (last is { } previous && SameBoard(previous, board)) continue;
+
+        PrintBoard(board, mySymbol, opponent);
+        last = board;
+
+        if (board.Status != MatchStatus.Playing)
         {
-            if (view.Turn != lastTurn || view.IsMyTurn)
-            {
-                Print(view);
-                lastTurn = view.Turn;
-            }
-            if (!reportedCollection && client.Matches.Entities.TryGetValue(view.MatchId, out var replicated))
-            {
-                Console.WriteLine($"[collection matches] my match #{view.MatchId}, board={string.Join(",", replicated.Board)}");
-                reportedCollection = true;
-            }
-            if (view.IsMyTurn)
-            {
-                Console.Write("轮到你，落子 (0-8)：");
-                var input = Console.ReadLine();
-                if (!int.TryParse(input, out var cell)) continue;
-                var moveResult = await client.MoveAsync(cell);
-                if (!moveResult.Ok) Console.WriteLine(moveResult.Message);
-            }
-        }
-        else
-        {
-            PrintFinal(view);
+            PrintFinalBoard(board, mySymbol);
             return;
         }
-        await Task.Delay(250);
+
+        if (board.Turn == mySymbol)
+        {
+            Console.Write("轮到你，落子 (0-8)：");
+            var input = Console.ReadLine();
+            if (!int.TryParse(input, out var cell)) continue;
+            var moveResult = await client.MoveAsync(cell);
+            if (!moveResult.Ok) Console.WriteLine(moveResult.Message);
+        }
     }
+}
+
+static async Task<MatchBoard> NextBoardAsync(TttClient client, ChannelReader<MatchBoard> reader, int timeoutMs)
+{
+    var read = reader.ReadAsync().AsTask();
+    var done = await Task.WhenAny(read, Task.Delay(timeoutMs));
+    if (done == read) return await read;
+
+    // Fallback: a collection update was missed; recover the latest view over RPC.
+    var view = await client.StateAsync();
+    return new MatchBoard(view.MatchId, 0, 0, view.Turn, view.Status, view.Winner, view.Cells);
+}
+
+static bool SameBoard(MatchBoard a, MatchBoard b) =>
+    a.Turn == b.Turn && a.Status == b.Status && a.Winner == b.Winner && a.Board.AsSpan().SequenceEqual(b.Board);
+
+static void PrintBoard(MatchBoard board, byte mySymbol, string opponent)
+{
+    Console.WriteLine();
+    Console.WriteLine(RenderBoard(board.Board));
+    Console.WriteLine($"你={Mark(mySymbol)} 对手={opponent} 轮到={Mark(board.Turn)}");
+}
+
+static void PrintFinalBoard(MatchBoard board, byte mySymbol)
+{
+    Console.WriteLine(RenderBoard(board.Board));
+    Console.WriteLine(board.Status switch
+    {
+        MatchStatus.Won when board.Winner == mySymbol => "你赢了！",
+        MatchStatus.Won => "你输了。",
+        MatchStatus.Draw => "平局。",
+        _ => "对局结束。",
+    });
 }
 
 static void Print(MatchView view)
