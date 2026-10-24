@@ -6,19 +6,6 @@ using GameNet.Transport;
 
 namespace GameNet.Demo.TicTacToe;
 
-[RpcGroup("ttt")]
-public sealed class TttApi
-{
-    private readonly TttServer _server;
-    public TttApi(TttServer server) => _server = server;
-
-    [Rpc] public Ack Register(string username, string password) => _server.Register(username, password);
-    [Rpc] public Ack Login(Session session, string username, string password) => _server.Login(session, username, password);
-    [Rpc] public QueueResult Queue(Session session) => _server.Queue(session);
-    [Rpc] public MatchView State(Session session) => _server.State(session);
-    [Rpc] public Ack Move(Session session, int cell) => _server.Move(session, cell);
-}
-
 public sealed class UserRow
 {
     [Key] public string Username { get; set; } = string.Empty;
@@ -39,6 +26,7 @@ public sealed class Match
 }
 
 /// <summary>Turn-based demo server: SQLite accounts, matchmaking queue, RPC-only gameplay.</summary>
+[RpcGroup("ttt")]
 public sealed class TttServer : IDisposable
 {
     private readonly UdpGameServerHost _host;
@@ -65,7 +53,7 @@ public sealed class TttServer : IDisposable
         _users = new SqliteStore<UserRow>($"Data Source={databasePath}");
         _users.EnsureSchema();
 
-        _server.RpcGroups.AddGroup(new TttApi(this));
+        _server.RpcGroups.AddGroup(this);
 
         _server.SessionJoined += session => _players.Spawn(session.Id, new PlayerEntity { Id = session.Id });
         _server.SessionLeft += OnDisconnected;
@@ -86,7 +74,7 @@ public sealed class TttServer : IDisposable
 
 
 
-    internal Ack Register(string username, string password)
+    [Rpc] public Ack Register(string username, string password)
     {
         username = username.Trim();
         if (username.Length is < 2 or > 32) return new Ack(false, "用户名长度需在 2..32");
@@ -105,7 +93,7 @@ public sealed class TttServer : IDisposable
         return new Ack(true, "注册成功");
     }
 
-    internal Ack Login(Session session, string username, string password)
+    [Rpc] public Ack Login(Session session, string username, string password)
     {
         username = username.Trim();
         var user = _users.Load(username);
@@ -136,7 +124,7 @@ public sealed class TttServer : IDisposable
         }
     }
 
-    internal QueueResult Queue(Session session)
+    [Rpc] public QueueResult Queue(Session session)
     {
         if (!_players.TryGet(session.Id, out var player) || !player.Authenticated)
             return new QueueResult(MatchStatus.Idle, "请先登录");
@@ -168,7 +156,7 @@ public sealed class TttServer : IDisposable
         return new QueueResult(MatchStatus.Playing, $"匹配成功，对局 #{match.Id}");
     }
 
-    internal MatchView State(Session session)
+    [Rpc] public MatchView State(Session session)
     {
         if (!_bySession.TryGetValue(session.Id, out var match))
         {
@@ -183,7 +171,7 @@ public sealed class TttServer : IDisposable
             (byte[])game.Cells.Clone(), opponent, match.Id);
     }
 
-    internal Ack Move(Session session, int cell)
+    [Rpc] public Ack Move(Session session, int cell)
     {
         if (cell is < 0 or > 8) return new Ack(false, "格子编号必须是 0..8");
         if (!_bySession.TryGetValue(session.Id, out var match)) return new Ack(false, "你不在对局中");
