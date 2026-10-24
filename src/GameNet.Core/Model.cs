@@ -36,7 +36,12 @@ public sealed class Session
     }
 
     public int Id { get; }
-    public IPeer Peer { get; }
+    public IPeer Peer { get; private set; }
+
+    public string ResumeToken { get; } = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16));
+    public long SuspendedAtMs { get; set; }
+
+    internal void Rebind(IPeer peer) => Peer = peer;
     public bool Subscribed => Subscriptions.Count > 0;
 
     /// <summary>Collections this session opted into.</summary>

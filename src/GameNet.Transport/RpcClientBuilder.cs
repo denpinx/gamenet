@@ -11,12 +11,19 @@ public sealed class RpcClientBuilder
     private readonly RpcClient _client;
     private readonly List<string> _subscriptions = new();
     private bool _built;
+    private string? _resumeToken;
 
     public RpcClientBuilder(ImpairmentOptions? impairment = null) => _client = new RpcClient(impairment);
 
     public RpcClientBuilder AddTypedCollection<T>(string name) where T : class, IEntityCodec<T>
     {
         _client.RegisterTypedCollection<T>(name);
+        return this;
+    }
+
+    public RpcClientBuilder WithResumeToken(string token)
+    {
+        _resumeToken = token;
         return this;
     }
 
@@ -36,6 +43,7 @@ public sealed class RpcClientBuilder
             throw new InvalidOperationException($"failed to connect to {host}:{port}");
         }
         _built = true;
+        if (_resumeToken is not null) _client.SendResume(_resumeToken);
         return _client;
     }
 }

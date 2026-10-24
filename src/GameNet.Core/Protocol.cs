@@ -16,6 +16,9 @@ public enum MessageType : byte
     RpcCall = 12,
     RpcCallResponse = 13,
     TypedSnapshot = 14,
+    SessionToken = 15,
+    Resume = 16,
+    ResumeResult = 17,
 }
 
 public enum EntityKind : byte

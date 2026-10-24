@@ -43,6 +43,9 @@ public sealed class RpcClient : IDisposable
     private readonly HashSet<string> _pendingSubscriptions = new(StringComparer.OrdinalIgnoreCase);
     private bool _built;
     private bool _manualTick;
+    private readonly TaskCompletionSource<string> _tokenTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource<bool> _resumeTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private string? _sessionToken;
     private Thread? _pump;
     private volatile bool _running;
     private uint _nextId;
@@ -52,6 +55,7 @@ public sealed class RpcClient : IDisposable
     public int SessionId => _transport.Id;
     public bool IsBuilt => _built;
     public bool ManualTick => _manualTick;
+    public string? SessionToken => _sessionToken;
 
     /// <summary>Replicated world for channels subscribed via <see cref="Subscribe"/>.</summary>
     public ClientWorld World { get; } = new();
@@ -124,6 +128,30 @@ public sealed class RpcClient : IDisposable
         writer.WriteByte((byte)type);
         writer.WriteByte(collection);
         return _transport.Send(1, writer.Written);
+    }
+
+    internal bool SendResume(string token)
+    {
+        var writer = new ByteWriter(64);
+        writer.WriteByte((byte)MessageType.Resume);
+        var bytes = System.Text.Encoding.UTF8.GetBytes(token);
+        writer.WriteVarUInt((uint)bytes.Length);
+        writer.WriteBytes(bytes);
+        return _transport.Send(1, writer.Written);
+    }
+
+    public async Task<string> WaitForSessionTokenAsync(int timeoutMs = 5000)
+    {
+        var done = await Task.WhenAny(_tokenTcs.Task, Task.Delay(timeoutMs));
+        if (done != _tokenTcs.Task) throw new TimeoutException("session token was not received");
+        return await _tokenTcs.Task;
+    }
+
+    public async Task<bool> WaitForResumeAsync(int timeoutMs = 5000)
+    {
+        var done = await Task.WhenAny(_resumeTcs.Task, Task.Delay(timeoutMs));
+        if (done != _resumeTcs.Task) throw new TimeoutException("resume result was not received");
+        return await _resumeTcs.Task;
     }
 
     /// <summary>
@@ -203,6 +231,21 @@ public sealed class RpcClient : IDisposable
                     _collections[name] = reader.ReadByte();
                 }
                 ResolvePending();
+                continue;
+            }
+            if (messageType == MessageType.SessionToken)
+            {
+                var tokenLength = (int)reader.ReadVarUInt();
+                var token = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(tokenLength).ToArray());
+                _sessionToken = token;
+                _tokenTcs.TrySetResult(token);
+                continue;
+            }
+            if (messageType == MessageType.ResumeResult)
+            {
+                var resumed = reader.ReadBool();
+                _ = reader.ReadVarInt();
+                _resumeTcs.TrySetResult(resumed);
                 continue;
             }
             if (messageType == MessageType.RpcCallResponse)

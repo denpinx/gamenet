@@ -184,18 +184,6 @@ static void Print(MatchView view)
     Console.WriteLine($"你={Mark(view.MySymbol)} 对手={view.Opponent} 轮到={Mark(view.Turn)}");
 }
 
-static void PrintFinal(MatchView view)
-{
-    Console.WriteLine(RenderBoard(view.Cells));
-    Console.WriteLine(view.Status switch
-    {
-        MatchStatus.Won when view.Winner == view.MySymbol => "你赢了！",
-        MatchStatus.Won => "你输了。",
-        MatchStatus.Draw => "平局。",
-        _ => "对局结束。",
-    });
-}
-
 static string RenderBoard(byte[] cells)
 {
     static char Mark(byte v) => v switch { 1 => 'X', 2 => 'O', _ => '.' };

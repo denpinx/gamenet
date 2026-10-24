@@ -6,6 +6,9 @@ public sealed class ServerOptions
     public float AoiRadius { get; set; } = 60f;
     public float ArenaSize { get; set; } = 200f;
     public bool AutoSubscribe { get; set; } = true;
+
+    /// <summary>How long a disconnected session keeps its token/subscriptions for resume.</summary>
+    public double ResumeGraceSeconds { get; set; } = 30;
     public int MaxChunkPayload { get; set; } = SnapshotCodec.MaxChunkPayload;
 }
 
@@ -44,6 +47,7 @@ public sealed class GameServer
 {
     private readonly IServerTransport _transport;
     private readonly Dictionary<int, Session> _sessions = new();
+    private readonly Dictionary<string, Session> _suspended = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<byte, EntityCollection> _collections = new();
     private readonly Dictionary<byte, ITypedCollection> _typedCollections = new();
     private readonly Dictionary<string, byte> _collectionIds = new();
@@ -206,6 +210,7 @@ public sealed class GameServer
             foreach (var id in _typedCollections.Keys) session.Subscriptions.Add(id);
         }
         SendCollectionRegistry(peer);
+        SendSessionToken(peer, session.ResumeToken);
         SessionJoined?.Invoke(session);
     }
 
@@ -228,9 +233,44 @@ public sealed class GameServer
     {
         Session? session;
         lock (_sessions) _sessions.Remove(peer.Id, out session);
-        RpcGroups.RemoveSession(peer.Id);
-        foreach (var collection in _typedCollections.Values) collection.RemoveSession(peer.Id);
-        if (session is not null) SessionLeft?.Invoke(session);
+        if (session is null) return;
+
+        session.SuspendedAtMs = Environment.TickCount64;
+        _suspended[session.ResumeToken] = session;
+    }
+
+    private void SendSessionToken(IPeer peer, string token)
+    {
+        var writer = new ByteWriter(64);
+        writer.WriteByte((byte)MessageType.SessionToken);
+        var bytes = System.Text.Encoding.UTF8.GetBytes(token);
+        writer.WriteVarUInt((uint)bytes.Length);
+        writer.WriteBytes(bytes);
+        peer.Send(1, writer.Written);
+    }
+
+    private void SendResumeResult(IPeer peer, bool resumed, int sessionId)
+    {
+        var writer = new ByteWriter(16);
+        writer.WriteByte((byte)MessageType.ResumeResult);
+        writer.WriteBool(resumed);
+        writer.WriteVarInt(sessionId);
+        peer.Send(1, writer.Written);
+    }
+
+    private void ExpireSuspended(long now)
+    {
+        if (_suspended.Count == 0) return;
+        var graceMs = (long)(Options.ResumeGraceSeconds * 1000);
+        foreach (var token in _suspended.Keys.ToList())
+        {
+            var session = _suspended[token];
+            if (now - session.SuspendedAtMs < graceMs) continue;
+            _suspended.Remove(token);
+            RpcGroups.RemoveSession(session.Id);
+            foreach (var collection in _typedCollections.Values) collection.RemoveSession(session.Id);
+            SessionLeft?.Invoke(session);
+        }
     }
 
     /// <summary>One authoritative tick: drain input, integrate, replicate per-session deltas.</summary>
@@ -288,6 +328,32 @@ public sealed class GameServer
                     // Client lost its baseline (loss/reordering); drop Known so the next tick is a full snapshot.
                     session.ClearKnown();
                     break;
+
+                case MessageType.Resume:
+                {
+                    var length = (int)reader.ReadVarUInt();
+                    var token = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(length));
+                    if (_suspended.Remove(token, out var resumed))
+                    {
+                        SessionLeft?.Invoke(session); // discard the transient connection session
+                        lock (_sessions)
+                        {
+                            _sessions.Remove(session.Id);
+                            resumed.Rebind(session.Peer);
+                            resumed.ClearKnown();
+                            resumed.HasAvatar = false;
+                            resumed.Avatar = default;
+                            _sessions[session.Peer.Id] = resumed;
+                        }
+                        SendSessionToken(session.Peer, resumed.ResumeToken);
+                        SendResumeResult(session.Peer, true, resumed.Id);
+                    }
+                    else
+                    {
+                        SendResumeResult(session.Peer, false, 0);
+                    }
+                    break;
+                }
 
                 case MessageType.Input:
                 {
