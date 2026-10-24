@@ -238,9 +238,22 @@ public sealed class TypedWorld<T> : ITypedWorld where T : class, IEntityCodec<T>
     public long ChunksApplied { get; private set; }
     public bool NeedsResync { get; private set; }
 
+    /// <summary>Raised after each applied chunk with the entries that changed.</summary>
+    public event Action<TypedCollectionChanged<T>>? Changed;
+
+    public IDisposable OnChanged(Action<TypedCollectionChanged<T>> handler)
+    {
+        Changed += handler;
+        return new EventSubscription(() => Changed -= handler);
+    }
+
+    /// <summary>Last exception thrown by a Changed handler; handlers never break the receive pump.</summary>
+    public Exception? LastHandlerError { get; private set; }
+
     public bool Apply(TypedChunk chunk)
     {
         var progressed = false;
+        var changes = Changed is null ? null : new List<TypedEntityChange<T>>();
         foreach (var entry in chunk.Entries)
         {
             var tick = _ticks.TryGetValue(entry.Id, out var known) ? known : 0;
@@ -251,21 +264,28 @@ public sealed class TypedWorld<T> : ITypedWorld where T : class, IEntityCodec<T>
                 case DeltaOp.Add:
                 {
                     var reader = new ByteReader(entry.Payload);
-                    _entities[entry.Id] = T.Read(ref reader);
+                    var value = T.Read(ref reader);
+                    _entities[entry.Id] = value;
                     _ticks[entry.Id] = chunk.Version;
+                    changes?.Add(new TypedEntityChange<T> { Id = entry.Id, Kind = ChangeKind.Added, Current = value });
                     progressed = true;
                     break;
                 }
                 case DeltaOp.Update:
                 {
                     if (!_entities.TryGetValue(entry.Id, out var current)) break;
+                    var previous = current;
                     var reader = new ByteReader(entry.Payload);
-                    _entities[entry.Id] = T.ApplyDelta(ref reader, current, entry.Mask);
+                    var updated = T.ApplyDelta(ref reader, current, entry.Mask);
+                    _entities[entry.Id] = updated;
                     _ticks[entry.Id] = chunk.Version;
+                    changes?.Add(new TypedEntityChange<T> { Id = entry.Id, Kind = ChangeKind.Updated, Previous = previous, Current = updated });
                     progressed = true;
                     break;
                 }
                 case DeltaOp.Remove:
+                    if (changes is not null && _entities.TryGetValue(entry.Id, out var removed))
+                        changes.Add(new TypedEntityChange<T> { Id = entry.Id, Kind = ChangeKind.Removed, Previous = removed });
                     _entities.Remove(entry.Id);
                     _ticks[entry.Id] = chunk.Version;
                     progressed = true;
@@ -275,7 +295,20 @@ public sealed class TypedWorld<T> : ITypedWorld where T : class, IEntityCodec<T>
 
         _lastVersion = Math.Max(_lastVersion, chunk.Version);
         ChunksApplied++;
+        if (changes is { Count: > 0 })
+            RaiseChanged(new TypedCollectionChanged<T> { Collection = Collection, Version = chunk.Version, Changes = changes });
         return progressed;
+    }
+
+    private void RaiseChanged(TypedCollectionChanged<T> context)
+    {
+        var handlers = Changed;
+        if (handlers is null) return;
+        foreach (var handler in handlers.GetInvocationList())
+        {
+            try { ((Action<TypedCollectionChanged<T>>)handler)(context); }
+            catch (Exception ex) { LastHandlerError = ex; }
+        }
     }
 
     public void Clear()

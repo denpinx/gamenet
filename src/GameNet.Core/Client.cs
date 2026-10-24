@@ -35,6 +35,18 @@ public sealed class ClientWorld
     public long ChunksApplied { get; private set; }
     public bool NeedsResync { get; private set; }
 
+    /// <summary>Raised after each applied chunk with the changes that chunk contained.</summary>
+    public event Action<CollectionChanged>? Changed;
+
+    public IDisposable OnChanged(Action<CollectionChanged> handler)
+    {
+        Changed += handler;
+        return new EventSubscription(() => Changed -= handler);
+    }
+
+    /// <summary>Last exception thrown by a Changed handler; handlers never break the receive pump.</summary>
+    public Exception? LastHandlerError { get; private set; }
+
     private readonly List<int> _lagSamples = new();
     public IReadOnlyList<int> LagSamples => _lagSamples;
     public int LastLagMs { get; private set; }
@@ -43,6 +55,7 @@ public sealed class ClientWorld
     {
         var state = State(chunk.Collection);
         var progressed = false;
+        var changes = Changed is null ? null : new List<EntityChange>();
         foreach (var entry in chunk.Entries)
         {
             var knownTick = state.EntityTick.TryGetValue(entry.Id, out var tick) ? tick : 0;
@@ -51,6 +64,8 @@ public sealed class ClientWorld
             switch (entry.Op)
             {
                 case DeltaOp.Add:
+                    if (changes is not null)
+                        changes.Add(new EntityChange { Id = entry.Id, Kind = ChangeKind.Added, Current = entry.State });
                     state.Entities[entry.Id] = entry.State;
                     state.EntityTick[entry.Id] = chunk.Version;
                     _missingUpdates = 0;
@@ -60,12 +75,15 @@ public sealed class ClientWorld
                 case DeltaOp.Update:
                     if (state.Entities.TryGetValue(entry.Id, out var current))
                     {
+                        var previous = current;
                         EntityCodec.ApplyFields(ref current, entry.State, entry.Mask);
                         current.Id = entry.Id;
                         state.Entities[entry.Id] = current;
                         state.EntityTick[entry.Id] = chunk.Version;
                         _missingUpdates = 0;
                         progressed = true;
+                        if (changes is not null)
+                            changes.Add(new EntityChange { Id = entry.Id, Kind = ChangeKind.Updated, Previous = previous, Current = current });
                     }
                     else
                     {
@@ -75,6 +93,8 @@ public sealed class ClientWorld
                     break;
 
                 case DeltaOp.Remove:
+                    if (changes is not null && state.Entities.TryGetValue(entry.Id, out var removed))
+                        changes.Add(new EntityChange { Id = entry.Id, Kind = ChangeKind.Removed, Previous = removed });
                     state.Entities.Remove(entry.Id);
                     state.EntityTick[entry.Id] = chunk.Version; // tombstone blocks older adds
                     progressed = true;
@@ -96,7 +116,19 @@ public sealed class ClientWorld
         }
 
         TrimTombstones();
+        if (changes is { Count: > 0 }) RaiseChanged(new CollectionChanged { Collection = chunk.Collection, Version = chunk.Version, Changes = changes });
         return progressed;
+    }
+
+    private void RaiseChanged(CollectionChanged context)
+    {
+        var handlers = Changed;
+        if (handlers is null) return;
+        foreach (var handler in handlers.GetInvocationList())
+        {
+            try { ((Action<CollectionChanged>)handler)(context); }
+            catch (Exception ex) { LastHandlerError = ex; }
+        }
     }
 
     private void TrimTombstones()
