@@ -339,7 +339,7 @@ public sealed class GameServer
         var args = new RpcValue[count];
         for (var i = 0; i < count; i++) args[i] = RpcValueCodec.Read(ref reader);
 
-        RpcGroups.TryInvoke(session.Id, group, method, args, out var result, out var status);
+        RpcGroups.TryInvoke(session.Id, session, group, method, args, out var result, out var status);
 
         var valueWriter = new ByteWriter(64);
         RpcValueCodec.Write(ref valueWriter, result);

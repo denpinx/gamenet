@@ -32,7 +32,7 @@
 | 可靠层 | seq + 累计 ACK + SACK、RTT/RTO、快速重传、NACK、拥塞窗口、分片重组、`Skip` 放弃、可选状态冗余（FEC） |
 | 状态复制 | 类型化集合 `[Entity]` 任意字段；固定九字段 `EntityState`；字段位图差量、Chunk 分块、非原子应用、每实体 tick 防旧包、墓碑防复活、Resync |
 | 兴趣管理 | 按会话 `Filter`（圆形 AOI 只是默认可替换的 Filter）、多集合、按名字订阅/退订、集合注册表下发 |
-| RPC | 方法 ID + 源生成编解码的类型化调用；`[RpcGroup]`/`[Rpc]` 的名字化动态调用；构造注入、单实例/每连接生命周期 |
+| RPC | 方法 ID + 源生成编解码的类型化调用；`[RpcGroup]`/`[Rpc]` 的名字化动态调用（支持 `[Packet]` 参数/返回、`Session` 注入）；构造注入、单实例/每连接生命周期 |
 | 持久化 | 代码优先建表、嵌套拆表、外键与级联、部分更新、Blob+压缩、自动补列迁移、`PersistableSet` tick 自动保存 |
 | 源生成 | `[Packet]`/`[Entity]` → `Write/Read/DiffMask/WriteDelta/ApplyDelta/SchemaHash/IWireCodec/IEntityCodec` |
 | 工具 | 多进程基准（10/50 客户端、1k–20k 实体、丢包/延迟/抖动/重复/FEC）、区块同步模拟、3 个可运行示例 |

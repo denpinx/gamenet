@@ -46,19 +46,19 @@ public sealed class TttClient : IDisposable
     public bool Subscribe(string name) => _rpc!.Subscribe(name);
 
     public Task<Ack> RegisterAsync(string username, string password) =>
-        _rpc!.CallAsync<RegisterRequest, Ack>(TttMethods.Register, new(username, password));
+        _rpc!.Group("ttt").Call<Ack>("register", username, password);
 
     public Task<Ack> LoginAsync(string username, string password) =>
-        _rpc!.CallAsync<RegisterRequest, Ack>(TttMethods.Login, new(username, password));
+        _rpc!.Group("ttt").Call<Ack>("login", username, password);
 
     public Task<QueueResult> QueueAsync() =>
-        _rpc!.CallAsync<Empty, QueueResult>(TttMethods.Queue, Empty.Value);
+        _rpc!.Group("ttt").Call<QueueResult>("queue");
 
     public Task<MatchView> StateAsync() =>
-        _rpc!.CallAsync<Empty, MatchView>(TttMethods.State, Empty.Value);
+        _rpc!.Group("ttt").Call<MatchView>("state");
 
     public Task<Ack> MoveAsync(int cell) =>
-        _rpc!.CallAsync<MoveRequest, Ack>(TttMethods.Move, new((byte)cell));
+        _rpc!.Group("ttt").Call<Ack>("move", cell);
 
     public void Dispose() => _rpc?.Dispose();
 }

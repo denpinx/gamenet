@@ -239,7 +239,10 @@ public sealed class RpcGroupRegistry
         }
     }
 
-    public bool TryInvoke(int sessionId, string group, string method, RpcValue[] args, out RpcValue result, out RpcStatus status)
+    public bool TryInvoke(int sessionId, string group, string method, RpcValue[] args, out RpcValue result, out RpcStatus status) =>
+        TryInvoke(sessionId, null, group, method, args, out result, out status);
+
+    public bool TryInvoke(int sessionId, Session? session, string group, string method, RpcValue[] args, out RpcValue result, out RpcStatus status)
     {
         result = RpcValue.Null;
         if (!_groups.TryGetValue(group, out var registration) || !registration.Methods.TryGetValue(method, out var target))
@@ -249,24 +252,36 @@ public sealed class RpcGroupRegistry
         }
 
         var parameters = target.GetParameters();
-        if (parameters.Length != args.Length)
+        var offset = parameters.Length > 0 && parameters[0].ParameterType == typeof(Session) ? 1 : 0;
+        if (parameters.Length - offset != args.Length)
         {
             status = RpcStatus.Error;
-            result = RpcValue.From($"method {group}.{method} expects {parameters.Length} arguments, got {args.Length}");
+            result = RpcValue.From($"method {group}.{method} expects {parameters.Length - offset} arguments, got {args.Length}");
             return false;
         }
 
-        var converted = new object?[args.Length];
+        var converted = new object?[parameters.Length];
+        if (offset == 1)
+        {
+            if (session is null)
+            {
+                status = RpcStatus.Error;
+                result = RpcValue.From($"method {group}.{method} requires a session");
+                return false;
+            }
+            converted[0] = session;
+        }
+
         for (var i = 0; i < args.Length; i++)
         {
             try
             {
-                converted[i] = args[i].To(parameters[i].ParameterType);
+                converted[i + offset] = args[i].To(parameters[i + offset].ParameterType);
             }
             catch (Exception ex)
             {
                 status = RpcStatus.Error;
-                result = RpcValue.From($"argument {parameters[i].Name}: {ex.Message}");
+                result = RpcValue.From($"argument {parameters[i + offset].Name}: {ex.Message}");
                 return false;
             }
         }

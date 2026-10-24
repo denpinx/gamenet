@@ -1,19 +1,22 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using GameNet.Core;
-using GameNet.Generated.GameNet.Demo.TicTacToe;
 using GameNet.Persistence;
 using GameNet.Transport;
 
 namespace GameNet.Demo.TicTacToe;
 
-public static class TttMethods
+[RpcGroup("ttt")]
+public sealed class TttApi
 {
-    public const ushort Register = 100;
-    public const ushort Login = 101;
-    public const ushort Queue = 102;
-    public const ushort State = 103;
-    public const ushort Move = 104;
+    private readonly TttServer _server;
+    public TttApi(TttServer server) => _server = server;
+
+    [Rpc] public Ack Register(string username, string password) => _server.Register(username, password);
+    [Rpc] public Ack Login(Session session, string username, string password) => _server.Login(session, username, password);
+    [Rpc] public QueueResult Queue(Session session) => _server.Queue(session);
+    [Rpc] public MatchView State(Session session) => _server.State(session);
+    [Rpc] public Ack Move(Session session, int cell) => _server.Move(session, cell);
 }
 
 public sealed class UserRow
@@ -59,11 +62,7 @@ public sealed class TttServer : IDisposable
         _users = new SqliteStore<UserRow>($"Data Source={databasePath}");
         _users.EnsureSchema();
 
-        _server.Rpc.Register(TttMethods.Register, HandleRegister);
-        _server.Rpc.Register(TttMethods.Login, HandleLogin);
-        _server.Rpc.Register(TttMethods.Queue, HandleQueue);
-        _server.Rpc.Register(TttMethods.State, HandleState);
-        _server.Rpc.Register(TttMethods.Move, HandleMove);
+        _server.RpcGroups.AddGroup(new TttApi(this));
 
         _server.SessionJoined += session => _players[session.Id] = new Player();
         _server.SessionLeft += OnDisconnected;
@@ -84,23 +83,12 @@ public sealed class TttServer : IDisposable
 
 
 
-    private static byte[] EncodeAck(bool ok, string message)
+    internal Ack Register(string username, string password)
     {
-        var writer = new ByteWriter(64);
-        AckPacketCodec.Write(ref writer, new Ack(ok, message));
-        return writer.ToArray();
-    }
-
-    private byte[] HandleRegister(Session session, byte[] payload)
-    {
-        var reader = new ByteReader(payload);
-        var request = RegisterRequestPacketCodec.Read(ref reader);
-        var username = request.Username.Trim();
-        var password = request.Password;
-
-        if (username.Length is < 2 or > 32) return EncodeAck(false, "用户名长度需在 2..32");
-        if (password.Length < 3) return EncodeAck(false, "密码至少 3 位");
-        if (_users.Load(username) is not null) return EncodeAck(false, "用户名已存在");
+        username = username.Trim();
+        if (username.Length is < 2 or > 32) return new Ack(false, "用户名长度需在 2..32");
+        if (password.Length < 3) return new Ack(false, "密码至少 3 位");
+        if (_users.Load(username) is not null) return new Ack(false, "用户名已存在");
 
         var salt = RandomNumberGenerator.GetBytes(16);
         var hash = Rfc2898DeriveBytes.Pbkdf2(password, salt, 100_000, HashAlgorithmName.SHA256, 32);
@@ -111,17 +99,14 @@ public sealed class TttServer : IDisposable
             PasswordHash = Convert.ToBase64String(hash),
             CreatedAt = DateTime.UtcNow,
         });
-        return EncodeAck(true, "注册成功");
+        return new Ack(true, "注册成功");
     }
 
-    private byte[] HandleLogin(Session session, byte[] payload)
+    internal Ack Login(Session session, string username, string password)
     {
-        var reader = new ByteReader(payload);
-        var request = RegisterRequestPacketCodec.Read(ref reader);
-        var username = request.Username.Trim();
-
+        username = username.Trim();
         var user = _users.Load(username);
-        if (user is null || !Verify(request.Password, user)) return EncodeAck(false, "用户名或密码错误");
+        if (user is null || !Verify(password, user)) return new Ack(false, "用户名或密码错误");
 
         if (!_players.TryGetValue(session.Id, out var player))
         {
@@ -130,7 +115,7 @@ public sealed class TttServer : IDisposable
         }
         player.Name = user.Username;
         player.Authenticated = true;
-        return EncodeAck(true, "登录成功");
+        return new Ack(true, "登录成功");
     }
 
     private static bool Verify(string password, UserRow user)
@@ -148,13 +133,13 @@ public sealed class TttServer : IDisposable
         }
     }
 
-    private byte[] HandleQueue(Session session, byte[] payload)
+    internal QueueResult Queue(Session session)
     {
         if (!_players.TryGetValue(session.Id, out var player) || !player.Authenticated)
-            return EncodeQueue(MatchStatus.Idle, "请先登录");
+            return new QueueResult(MatchStatus.Idle, "请先登录");
 
         if (_bySession.TryGetValue(session.Id, out var existing))
-            return EncodeQueue(MatchStatus.Playing, $"对局 #{existing.Id}");
+            return new QueueResult(MatchStatus.Playing, $"对局 #{existing.Id}");
 
         if (!_queue.Contains(session.Id)) _queue.Enqueue(session.Id);
 
@@ -170,58 +155,41 @@ public sealed class TttServer : IDisposable
         if (candidates.Count < 2)
         {
             foreach (var id in candidates) _queue.Enqueue(id);
-            return EncodeQueue(MatchStatus.Queued, "等待对手…");
+            return new QueueResult(MatchStatus.Queued, "等待对手…");
         }
 
         var match = new Match { Id = _nextMatchId++, PlayerA = candidates[0], PlayerB = candidates[1] };
         _bySession[candidates[0]] = match;
         _bySession[candidates[1]] = match;
         _matches.Spawn(match.Id, ToEntity(match));
-        return EncodeQueue(MatchStatus.Playing, $"匹配成功，对局 #{match.Id}");
+        return new QueueResult(MatchStatus.Playing, $"匹配成功，对局 #{match.Id}");
     }
 
-    private static byte[] EncodeQueue(MatchStatus status, string message)
-    {
-        var writer = new ByteWriter(64);
-        QueueResultPacketCodec.Write(ref writer, new QueueResult(status, message));
-        return writer.ToArray();
-    }
-
-    private byte[] HandleState(Session session, byte[] payload)
+    internal MatchView State(Session session)
     {
         if (!_bySession.TryGetValue(session.Id, out var match))
         {
             var status = _queue.Contains(session.Id) ? MatchStatus.Queued : MatchStatus.Idle;
-            return EncodeState(new MatchView(status, 0, 0, 0, new byte[9], string.Empty, 0));
+            return new MatchView(status, 0, 0, 0, new byte[9], string.Empty, 0);
         }
 
         var game = match.Game;
         var opponentId = match.OpponentOf(session.Id);
         var opponent = _players.TryGetValue(opponentId, out var p) ? p.Name : $"player{opponentId}";
-        return EncodeState(new MatchView(game.Status, match.SymbolOf(session.Id), game.Turn, game.Winner,
-            (byte[])game.Cells.Clone(), opponent, match.Id));
+        return new MatchView(game.Status, match.SymbolOf(session.Id), game.Turn, game.Winner,
+            (byte[])game.Cells.Clone(), opponent, match.Id);
     }
 
-    private static byte[] EncodeState(MatchView view)
+    internal Ack Move(Session session, int cell)
     {
-        var writer = new ByteWriter(64);
-        MatchViewPacketCodec.Write(ref writer, view);
-        return writer.ToArray();
-    }
-
-    private byte[] HandleMove(Session session, byte[] payload)
-    {
-        var reader = new ByteReader(payload);
-        var request = MoveRequestPacketCodec.Read(ref reader);
-
-        if (!_bySession.TryGetValue(session.Id, out var match)) return EncodeAck(false, "你不在对局中");
+        if (cell is < 0 or > 8) return new Ack(false, "格子编号必须是 0..8");
+        if (!_bySession.TryGetValue(session.Id, out var match)) return new Ack(false, "你不在对局中");
 
         var symbol = match.SymbolOf(session.Id);
-        var ok = match.Game.TryMove(symbol, request.Cell, out var error);
+        var ok = match.Game.TryMove(symbol, cell, out var error);
         if (ok) _matches.Spawn(match.Id, ToEntity(match));
-        return EncodeAck(ok, ok ? "ok" : error);
+        return new Ack(ok, ok ? "ok" : error);
     }
-
     private void OnDisconnected(Session session)
     {
         _players.TryRemove(session.Id, out _);
