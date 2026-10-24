@@ -1,4 +1,5 @@
 using GameNet.Core;
+using GameNet.Persistence;
 using GameNet.Transport;
 using Xunit;
 
@@ -24,6 +25,31 @@ public class TypedKeyTests
         public Vec2I Read(ref ByteReader reader) => new(reader.ReadVarInt(), reader.ReadVarInt());
     }
 
+    [Fact]
+    public void CustomStructKey_PersistsToSqlite()
+    {
+        var db = Path.Combine(Path.GetTempPath(), $"vec2i-{Guid.NewGuid():N}.db");
+        try
+        {
+            using var transport = new UdpServerTransport(0);
+            transport.Start();
+            var server = new GameServer(transport, new ServerOptions { AutoSubscribe = false, AoiRadius = 0 });
+            var tiles = server.RegisterTypedCollection<Vec2I, PlayerEntity>("tiles");
+            var store = tiles.UseSqlite($"Data Source={db}");
+
+            tiles.Spawn(new Vec2I(3, 4), new PlayerEntity { Id = 1, Name = "tile", X = 3, Y = 4 });
+            var loaded = store.Load(new Vec2I(3, 4));
+            Assert.NotNull(loaded);
+            Assert.Equal("tile", loaded!.Name);
+
+            tiles.Despawn(new Vec2I(3, 4));
+            Assert.Null(store.Load(new Vec2I(3, 4)));
+        }
+        finally
+        {
+            try { File.Delete(db); } catch { }
+        }
+    }
     [Fact]
     public async Task CustomStructKey_ReplicatesAndIsQueryable()
     {
