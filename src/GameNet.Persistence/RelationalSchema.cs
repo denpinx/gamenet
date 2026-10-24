@@ -255,7 +255,11 @@ internal sealed class SchemaGraph
             .Where(p => p.CanRead && p.GetCustomAttribute<IgnoreAttribute>() is null)
             .ToList();
 
-        var key = properties.FirstOrDefault(p => p.GetCustomAttribute<KeyAttribute>() is not null)
+        var explicitKeys = properties.Where(p => p.GetCustomAttribute<KeyAttribute>() is not null).ToList();
+        if (explicitKeys.Count > 1)
+            throw new InvalidOperationException($"{type.Name} has {explicitKeys.Count} [Key] properties; composite keys are not supported");
+
+        var key = explicitKeys.FirstOrDefault()
                   ?? properties.FirstOrDefault(p => string.Equals(p.Name, "Id", StringComparison.OrdinalIgnoreCase));
 
         return key ?? throw new InvalidOperationException($"{type.Name} needs a [Key] property or a property named Id");

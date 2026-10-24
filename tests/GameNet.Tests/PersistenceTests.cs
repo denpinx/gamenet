@@ -19,6 +19,12 @@ public sealed class NestedRow
     public PlayerRow Nested { get; set; } = new();
 }
 
+public sealed class CompositeKeyRow
+{
+    [Key] public int A { get; set; }
+    [Key] public int B { get; set; }
+}
+
 public class PersistenceTests : IDisposable
 {
     private readonly string _dbPath;
@@ -35,6 +41,15 @@ public class PersistenceTests : IDisposable
         try { File.Delete(_dbPath); } catch { }
     }
 
+    [Fact]
+    public void MultipleKeyAttributes_AreRejected()
+    {
+        Assert.Throws<InvalidOperationException>(() =>
+        {
+            var store = new SqliteStore<CompositeKeyRow>(_connectionString);
+            store.EnsureSchema();
+        });
+    }
     [Fact]
     public void EnsureSchema_CreatesTable_FromType()
     {
