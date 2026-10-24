@@ -225,6 +225,25 @@ public sealed class TypedCollection<T> : ITypedCollection where T : class, IEnti
         return value;
     }
 
+    /// <summary>Returns the in-memory entity, else loads it from the store, else creates and saves it.</summary>
+    public T LoadOrSpawn(TypedKey id, Func<T> factory)
+    {
+        if (PersistenceStore is null) throw new InvalidOperationException($"collection {Name} has no persistence store");
+        if (_items.TryGetValue(id, out var current)) return current;
+
+        var loaded = PersistenceStore.Load(id);
+        if (loaded is not null)
+        {
+            _items[id] = loaded;
+            return loaded;
+        }
+
+        var created = factory();
+        _items[id] = created;
+        PersistenceStore.Save(id, created);
+        return created;
+    }
+
     /// <summary>Loads matching rows and spawns them; useful for name/property lookups.</summary>
     public IReadOnlyList<T> LoadWhere(Func<T, bool> predicate)
     {

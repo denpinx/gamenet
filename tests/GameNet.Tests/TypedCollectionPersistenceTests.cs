@@ -42,6 +42,36 @@ public class TypedCollectionPersistenceTests
         }
     }
     [Fact]
+    public void TypedCollection_LoadOrSpawn_LoadsOrCreates()
+    {
+        var db = Path.Combine(Path.GetTempPath(), $"typed-{Guid.NewGuid():N}.db");
+        try
+        {
+            using var transport = new UdpServerTransport(0);
+            transport.Start();
+            var server = new GameServer(transport, new ServerOptions { AutoSubscribe = false, AoiRadius = 0 });
+            var named = server.RegisterTypedCollection<NamedEntity>("named");
+            var store = named.UseSqlite($"Data Source={db}", autoPersist: false);
+
+            store.Store.Save(new NamedEntity { Name = "alice", X = 1 });
+
+            var alice = named.LoadOrSpawn("alice", () => new NamedEntity { Name = "alice", X = 99 });
+            Assert.Equal(1, alice.X); // loaded from the database, factory not used
+
+            var bob = named.LoadOrSpawn("bob", () => new NamedEntity { Name = "bob", X = 2 });
+            Assert.Equal(2, bob.X);
+            Assert.Equal(2, store.Load("bob")!.X); // created row was saved
+
+            var bobAgain = named.LoadOrSpawn("bob", () => new NamedEntity { Name = "bob", X = 3 });
+            Assert.Same(bob, bobAgain);
+            Assert.Equal(2, bobAgain.X);
+        }
+        finally
+        {
+            try { File.Delete(db); } catch { }
+        }
+    }
+    [Fact]
     public void TypedCollection_SaveAtSpecificId()
     {
         var db = Path.Combine(Path.GetTempPath(), $"typed-{Guid.NewGuid():N}.db");
