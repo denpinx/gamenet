@@ -29,8 +29,8 @@ public class TypedCollectionTests
         server.Start();
 
         using var client = new RpcClient();
-        Assert.True(client.Connect("127.0.0.1", transport.Port));
         var world = client.RegisterTypedCollection<PlayerView>("players");
+        Assert.True(client.Connect("127.0.0.1", transport.Port));
         client.Subscribe("players");
 
         await PumpUntilAsync(server, () => world.Count == 1);
@@ -60,8 +60,8 @@ public class TypedCollectionTests
         server.Start();
 
         using var client = new RpcClient();
-        Assert.True(client.Connect("127.0.0.1", transport.Port));
         var world = client.RegisterTypedCollection<PlayerView>("players");
+        Assert.True(client.Connect("127.0.0.1", transport.Port));
         client.Subscribe("players");
 
         await PumpUntilAsync(server, () => world.Count == 1);

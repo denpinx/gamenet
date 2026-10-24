@@ -43,15 +43,15 @@ static async Task RunDemoAsync()
 static async Task RunClientAsync(string host, int port)
 {
     using var client = new RpcClient();
-    if (!client.Connect(host, port))
+
+    // Build mode: collection types are registered before Build, then frozen.
+    var players = client.RegisterTypedCollection<PlayerView>("players");
+    client.Subscribe("players");
+    if (!client.Build(host, port))
     {
         Console.WriteLine("connect failed");
         return;
     }
-
-    // Typed world: no ToState/FromState, the generated codec handles the wire.
-    var players = client.RegisterTypedCollection<PlayerView>("players");
-    client.Subscribe("players");
 
     var id = await client.Group("hello").Call<int>("spawn", "alice");
     var greeting = await client.Group("hello").Call<string>("greet", "alice");

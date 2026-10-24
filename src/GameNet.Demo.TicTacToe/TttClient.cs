@@ -23,9 +23,8 @@ public sealed class TttClient : IDisposable
 
     public bool Connect(string host, int port)
     {
-        if (!_rpc.Connect(host, port)) return false;
         Matches = _rpc.RegisterTypedCollection<MatchBoard>("matches");
-        return true;
+        return _rpc.Build(host, port);
     }
 
     public TypedWorld<MatchBoard> Matches { get; private set; } = null!;

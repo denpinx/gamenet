@@ -93,8 +93,8 @@ public class ClientEventTests
         server.Start();
 
         using var client = new RpcClient();
-        Assert.True(client.Connect("127.0.0.1", transport.Port));
         var world = client.RegisterTypedCollection<PlayerView>("players");
+        Assert.True(client.Connect("127.0.0.1", transport.Port));
         client.Subscribe("players");
 
         var events = new List<TypedCollectionChanged<PlayerView>>();

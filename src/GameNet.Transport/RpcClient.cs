@@ -39,6 +39,10 @@ public sealed class RpcClient : IDisposable
     private readonly ConcurrentDictionary<uint, TaskCompletionSource<RpcReply>> _pending = new();
     private readonly ConcurrentDictionary<string, byte> _collections = new();
     private readonly ConcurrentDictionary<byte, ITypedWorld> _typedWorlds = new();
+    private readonly List<(string Name, ITypedWorld World)> _pendingTyped = new();
+    private readonly HashSet<string> _pendingSubscriptions = new(StringComparer.OrdinalIgnoreCase);
+    private bool _built;
+    private bool _manualTick;
     private Thread? _pump;
     private volatile bool _running;
     private uint _nextId;
@@ -46,6 +50,8 @@ public sealed class RpcClient : IDisposable
     public RpcClient(ImpairmentOptions? impairment = null) => _transport = new UdpClientTransport(impairment);
 
     public int SessionId => _transport.Id;
+    public bool IsBuilt => _built;
+    public bool ManualTick => _manualTick;
 
     /// <summary>Replicated world for channels subscribed via <see cref="Subscribe"/>.</summary>
     public ClientWorld World { get; } = new();
@@ -54,9 +60,14 @@ public sealed class RpcClient : IDisposable
 
     public bool Unsubscribe(byte collection) => SendControl(MessageType.Unsubscribe, collection);
 
-    /// <summary>Subscribes by name, resolving the wire id from the registry the server sends on connect.</summary>
+    /// <summary>Subscribes by name. Before Build it is queued; after Build it resolves immediately.</summary>
     public bool Subscribe(string name, int timeoutMs = 2000)
     {
+        if (!_built)
+        {
+            _pendingSubscriptions.Add(name);
+            return true;
+        }
         if (!TryResolve(name, timeoutMs, out var id)) return false;
         return Subscribe(id);
     }
@@ -70,13 +81,15 @@ public sealed class RpcClient : IDisposable
     public IReadOnlyDictionary<int, EntityState>? EntitiesFor(string name) =>
         _collections.TryGetValue(name, out var id) ? World.EntitiesFor(id) : null;
 
-    /// <summary>Creates a typed world for a [Entity] collection; call Subscribe(name) as well.</summary>
-    public TypedWorld<T> RegisterTypedCollection<T>(string name, int timeoutMs = 2000) where T : class, IEntityCodec<T>
+    /// <summary>
+    /// Registers a typed world before Build. After Build this throws: collection types are frozen,
+    /// just like subscriptions are resolved from the server registry at handshake time.
+    /// </summary>
+    public TypedWorld<T> RegisterTypedCollection<T>(string name) where T : class, IEntityCodec<T>
     {
-        if (!TryResolve(name, timeoutMs, out var id))
-            throw new KeyNotFoundException($"collection '{name}' was not announced by the server");
-        var world = new TypedWorld<T>(id);
-        _typedWorlds[id] = world;
+        if (_built) throw new InvalidOperationException("client is built; register collections before Build()");
+        var world = new TypedWorld<T>(0);
+        _pendingTyped.Add((name, world));
         return world;
     }
 
@@ -108,13 +121,34 @@ public sealed class RpcClient : IDisposable
         return _transport.Send(1, writer.Written);
     }
 
-    public bool Connect(string host, int port, int timeoutMs = 5000)
+    /// <summary>
+    /// Connects and freezes the client configuration. Register typed collections and subscriptions
+    /// before calling Build; afterwards only Subscribe/Unsubscribe and calls are allowed.
+    /// </summary>
+    public bool Build(string host, int port, int timeoutMs = 5000, bool manualTick = false)
     {
+        if (_built) throw new InvalidOperationException("client is already built");
         if (!_transport.Connect(host, port, timeoutMs)) return false;
-        _running = true;
-        _pump = new Thread(PumpLoop) { IsBackground = true, Name = "rpc-client-pump" };
-        _pump.Start();
+        _built = true;
+        _manualTick = manualTick;
+        if (!manualTick)
+        {
+            _running = true;
+            _pump = new Thread(PumpLoop) { IsBackground = true, Name = "rpc-client-pump" };
+            _pump.Start();
+        }
         return true;
+    }
+
+    /// <summary>Compatibility wrapper around Build with the background pump enabled.</summary>
+    public bool Connect(string host, int port, int timeoutMs = 5000) => Build(host, port, timeoutMs);
+
+    /// <summary>Manual mode only: poll the socket, dispatch responses and apply received chunks.</summary>
+    public void Tick()
+    {
+        if (!_manualTick) throw new InvalidOperationException("client is not in manual-tick mode");
+        _transport.Poll();
+        Drain();
     }
 
     private void PumpLoop()
@@ -124,57 +158,82 @@ public sealed class RpcClient : IDisposable
             try
             {
                 _transport.Poll();
-                while (_transport.TryDequeue(out var packet))
-                {
-                    if (packet.Channel == 0)
-                    {
-                        if (packet.Payload.Length > 0 && packet.Payload[0] == (byte)MessageType.TypedSnapshot)
-                        {
-                            if (TypedSnapshotCodec.TryRead(packet.Payload, out var typedChunk) &&
-                                _typedWorlds.TryGetValue(typedChunk.Collection, out var typedWorld))
-                                typedWorld.Apply(typedChunk);
-                        }
-                        else if (SnapshotCodec.TryRead(packet.Payload, out var chunk))
-                        {
-                            World.OnChunk(chunk);
-                        }
-                        continue;
-                    }
-                    if (packet.Channel != 1) continue;
-                    var reader = new ByteReader(packet.Payload);
-                    var messageType = (MessageType)reader.ReadByte();
-                    if (messageType == MessageType.CollectionRegistry)
-                    {
-                        var count = (int)reader.ReadVarUInt();
-                        for (var i = 0; i < count; i++)
-                        {
-                            var name = System.Text.Encoding.UTF8.GetString(reader.ReadBytes((int)reader.ReadVarUInt()).ToArray());
-                            _collections[name] = reader.ReadByte();
-                        }
-                        continue;
-                    }
-                    if (messageType == MessageType.RpcCallResponse)
-                    {
-                        var callId = reader.ReadUInt();
-                        var callStatus = (RpcStatus)reader.ReadByte();
-                        var valueLength = (int)reader.ReadVarUInt();
-                        var valuePayload = reader.ReadBytes(valueLength).ToArray();
-                        if (_pending.TryRemove(callId, out var callTcs)) callTcs.TrySetResult(new RpcReply(callStatus, valuePayload));
-                        continue;
-                    }
-                    if (messageType != MessageType.RpcResponse) continue;
-                    var id = reader.ReadUInt();
-                    var status = (RpcStatus)reader.ReadByte();
-                    var length = (int)reader.ReadVarUInt();
-                    var payload = reader.ReadBytes(length).ToArray();
-                    if (_pending.TryRemove(id, out var tcs)) tcs.TrySetResult(new RpcReply(status, payload));
-                }
+                Drain();
             }
             catch (ObjectDisposedException)
             {
                 break;
             }
             Thread.Sleep(2);
+        }
+    }
+
+    private void Drain()
+    {
+        while (_transport.TryDequeue(out var packet))
+        {
+            if (packet.Channel == 0)
+            {
+                if (packet.Payload.Length > 0 && packet.Payload[0] == (byte)MessageType.TypedSnapshot)
+                {
+                    if (TypedSnapshotCodec.TryRead(packet.Payload, out var typedChunk) &&
+                        _typedWorlds.TryGetValue(typedChunk.Collection, out var typedWorld))
+                        typedWorld.Apply(typedChunk);
+                }
+                else if (SnapshotCodec.TryRead(packet.Payload, out var chunk))
+                {
+                    World.OnChunk(chunk);
+                }
+                continue;
+            }
+            if (packet.Channel != 1) continue;
+            var reader = new ByteReader(packet.Payload);
+            var messageType = (MessageType)reader.ReadByte();
+            if (messageType == MessageType.CollectionRegistry)
+            {
+                var count = (int)reader.ReadVarUInt();
+                for (var i = 0; i < count; i++)
+                {
+                    var name = System.Text.Encoding.UTF8.GetString(reader.ReadBytes((int)reader.ReadVarUInt()).ToArray());
+                    _collections[name] = reader.ReadByte();
+                }
+                ResolvePending();
+                continue;
+            }
+            if (messageType == MessageType.RpcCallResponse)
+            {
+                var callId = reader.ReadUInt();
+                var callStatus = (RpcStatus)reader.ReadByte();
+                var valueLength = (int)reader.ReadVarUInt();
+                var valuePayload = reader.ReadBytes(valueLength).ToArray();
+                if (_pending.TryRemove(callId, out var callTcs)) callTcs.TrySetResult(new RpcReply(callStatus, valuePayload));
+                continue;
+            }
+            if (messageType != MessageType.RpcResponse) continue;
+            var id = reader.ReadUInt();
+            var status = (RpcStatus)reader.ReadByte();
+            var length = (int)reader.ReadVarUInt();
+            var payload = reader.ReadBytes(length).ToArray();
+            if (_pending.TryRemove(id, out var tcs)) tcs.TrySetResult(new RpcReply(status, payload));
+        }
+    }
+
+    private void ResolvePending()
+    {
+        for (var i = _pendingTyped.Count - 1; i >= 0; i--)
+        {
+            var (name, world) = _pendingTyped[i];
+            if (!_collections.TryGetValue(name, out var id)) continue;
+            world.Collection = id;
+            _typedWorlds[id] = world;
+            _pendingTyped.RemoveAt(i);
+        }
+
+        foreach (var name in _pendingSubscriptions.ToList())
+        {
+            if (!_collections.TryGetValue(name, out var id)) continue;
+            SendControl(MessageType.Subscribe, id);
+            _pendingSubscriptions.Remove(name);
         }
     }
 

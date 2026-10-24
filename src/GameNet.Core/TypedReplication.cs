@@ -219,7 +219,7 @@ public sealed class TypedCollection<T> : ITypedCollection where T : class, IEnti
 
 public interface ITypedWorld
 {
-    byte Collection { get; }
+    byte Collection { get; set; }
     bool Apply(TypedChunk chunk);
 }
 
@@ -232,7 +232,7 @@ public sealed class TypedWorld<T> : ITypedWorld where T : class, IEntityCodec<T>
 
     public TypedWorld(byte collection) => Collection = collection;
 
-    public byte Collection { get; }
+    public byte Collection { get; set; }
     public IReadOnlyDictionary<int, T> Entities => _entities;
     public int Count => _entities.Count;
     public long ChunksApplied { get; private set; }
