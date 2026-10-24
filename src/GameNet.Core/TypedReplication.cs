@@ -127,6 +127,7 @@ public sealed class TypedCollection<T> : ITypedCollection where T : class, IEnti
 {
     private readonly Dictionary<int, T> _items = new();
     private readonly Dictionary<int, Dictionary<int, T>> _known = new();
+    private bool _suppressPersist;
 
     internal TypedCollection(byte id, string name)
     {
@@ -142,8 +143,59 @@ public sealed class TypedCollection<T> : ITypedCollection where T : class, IEnti
     public Func<Session, T, bool>? Filter { get; set; }
     public Action<double>? OnTick { get; set; }
 
-    public void Spawn(int id, T value) => _items[id] = value;
-    public bool Despawn(int id) => _items.Remove(id);
+    public ITypedCollectionStore<T>? PersistenceStore { get; private set; }
+    public bool AutoPersist { get; set; } = true;
+
+    public void UseStore(ITypedCollectionStore<T> store, bool autoPersist = true)
+    {
+        PersistenceStore = store;
+        AutoPersist = autoPersist;
+        store.EnsureSchema();
+    }
+
+    public void Spawn(int id, T value)
+    {
+        _items[id] = value;
+        if (AutoPersist && !_suppressPersist) PersistenceStore?.Save(id, value);
+    }
+
+    public bool Despawn(int id)
+    {
+        var removed = _items.Remove(id);
+        if (removed && AutoPersist && !_suppressPersist) PersistenceStore?.Delete(id);
+        return removed;
+    }
+
+    public void Save(int id)
+    {
+        if (PersistenceStore is null) throw new InvalidOperationException($"collection {Name} has no persistence store");
+        if (!_items.TryGetValue(id, out var value)) throw new KeyNotFoundException($"entity {id} is not in collection {Name}");
+        PersistenceStore.Save(id, value);
+    }
+
+    public T? Load(int id)
+    {
+        if (PersistenceStore is null) throw new InvalidOperationException($"collection {Name} has no persistence store");
+        var value = PersistenceStore.Load(id);
+        if (value is null) return null;
+        _suppressPersist = true;
+        try { Spawn(id, value); }
+        finally { _suppressPersist = false; }
+        return value;
+    }
+
+    public int LoadAll()
+    {
+        if (PersistenceStore is null) throw new InvalidOperationException($"collection {Name} has no persistence store");
+        var rows = PersistenceStore.LoadAll();
+        _suppressPersist = true;
+        try
+        {
+            foreach (var (id, value) in rows) Spawn(id, value);
+        }
+        finally { _suppressPersist = false; }
+        return rows.Count;
+    }
     public bool TryGet(int id, out T value) => _items.TryGetValue(id, out value!);
 
     public void Tick(double deltaSeconds) => OnTick?.Invoke(deltaSeconds);
