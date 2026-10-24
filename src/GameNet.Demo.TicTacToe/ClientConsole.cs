@@ -1,9 +1,8 @@
-using System.Threading.Channels;
 using GameNet.Core;
 
 namespace GameNet.Demo.TicTacToe;
 
-/// <summary>Interactive console client: REPL, queueing and one match loop.</summary>
+/// <summary>Interactive console client: REPL commands, then one event-driven match.</summary>
 public sealed class ClientConsole
 {
     private readonly TttClient _client;
@@ -72,135 +71,12 @@ public sealed class ClientConsole
 
     private async Task QueueAndPlayAsync()
     {
+        using var session = new MatchSession(_client);
         var queued = await _client.QueueAsync();
         Console.WriteLine(queued.Message);
-
-        if (queued.Status == MatchStatus.Queued)
-        {
-            while (true)
-            {
-                await Task.Delay(500);
-                MatchView view;
-                try
-                {
-                    view = await _client.StateAsync();
-                }
-                catch (Exception ex) when (IsTransient(ex))
-                {
-                    if (!await TryReconnectAsync(ex)) return;
-                    continue;
-                }
-
-                if (view.Status == MatchStatus.Playing)
-                {
-                    await PlayAsync();
-                    return;
-                }
-            }
-        }
-
-        await PlayAsync();
-    }
-
-    private async Task PlayAsync()
-    {
-        var updates = Channel.CreateUnbounded<MatchBoard>();
-        using var subscription = _client.Matches.OnChanged(e =>
-        {
-            foreach (var change in e.Changes)
-                if (change.Kind != ChangeKind.Removed && change.Current is { } board)
-                    updates.Writer.TryWrite(board);
-        });
-
-        var view = await _client.StateAsync();
-        var mySymbol = view.MySymbol;
-        var opponent = view.Opponent;
-        Console.WriteLine($"对局 #{view.MatchId}：你={BoardText.Mark(mySymbol)} 对手={opponent}");
-
-        MatchBoard? last = null;
-        while (true)
-        {
-            MatchBoard board;
-            try
-            {
-                board = await NextBoardAsync(updates.Reader, 3000);
-            }
-            catch (Exception ex) when (IsTransient(ex))
-            {
-                if (!await TryReconnectAsync(ex)) return;
-                continue;
-            }
-
-            if (last is { } previous && SameBoard(previous, board)) continue;
-
-            PrintBoard(board, mySymbol, opponent);
-            last = board;
-
-            if (board.Status != MatchStatus.Playing)
-            {
-                PrintFinalBoard(board, mySymbol);
-                return;
-            }
-
-            if (board.Turn == mySymbol)
-            {
-                Console.Write("轮到你，落子 (0-8)：");
-                var input = Console.ReadLine();
-                if (!int.TryParse(input, out var cell)) continue;
-
-                Ack result;
-                try
-                {
-                    result = await _client.MoveAsync(cell);
-                }
-                catch (Exception ex) when (IsTransient(ex))
-                {
-                    if (!await TryReconnectAsync(ex)) return;
-                    continue;
-                }
-
-                if (!result.Ok) Console.WriteLine(result.Message);
-            }
-        }
-    }
-
-    private async Task<MatchBoard> NextBoardAsync(ChannelReader<MatchBoard> reader, int timeoutMs)
-    {
-        var read = reader.ReadAsync().AsTask();
-        var done = await Task.WhenAny(read, Task.Delay(timeoutMs));
-        if (done == read) return await read;
-
-        // A collection update was missed: recover the latest view over RPC.
-        var view = await _client.StateAsync();
-        return new MatchBoard(view.MatchId, 0, 0, view.Turn, view.Status, view.Winner, view.Cells);
-    }
-
-    private async Task<bool> TryReconnectAsync(Exception error)
-    {
-        Console.WriteLine($"[reconnect] {error.Message}");
-        if (await _client.ReconnectAsync()) return true;
-        Console.WriteLine("[reconnect] 失败");
-        return false;
-    }
-
-    private static bool IsTransient(Exception ex) =>
-        ex is TimeoutException or RpcException or InvalidOperationException;
-
-    private static bool SameBoard(MatchBoard a, MatchBoard b) =>
-        a.Turn == b.Turn && a.Status == b.Status && a.Winner == b.Winner &&
-        a.Board.AsSpan().SequenceEqual(b.Board);
-
-    private static void PrintBoard(MatchBoard board, byte mySymbol, string opponent)
-    {
-        Console.WriteLine();
-        Console.WriteLine(BoardText.Render(board.Board));
-        Console.WriteLine($"你={BoardText.Mark(mySymbol)} 对手={opponent} 轮到={BoardText.Mark(board.Turn)}");
-    }
-
-    private static void PrintFinalBoard(MatchBoard board, byte mySymbol)
-    {
-        Console.WriteLine(BoardText.Render(board.Board));
-        Console.WriteLine(BoardText.Result(board.Status, board.Winner, mySymbol));
+        if (queued.Status == MatchStatus.Idle) return;
+        if (queued.Status == MatchStatus.Playing) await session.RefreshAsync();
+        await session.Completion;
     }
 
     private static void PrintView(MatchView view)

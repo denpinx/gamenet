@@ -1,3 +1,4 @@
+using System.Threading.Channels;
 using GameNet.Core;
 
 namespace GameNet.Demo.TicTacToe;
@@ -19,6 +20,9 @@ public static class BotRunner
             return;
         }
 
+        var aUpdates = Subscribe(a);
+        var bUpdates = Subscribe(b);
+
         var suffix = DateTime.UtcNow.Ticks.ToString()[^6..];
         var userA = "alice" + suffix;
         var userB = "bob" + suffix;
@@ -30,55 +34,67 @@ public static class BotRunner
         Console.WriteLine((await a.QueueAsync()).Message);
         Console.WriteLine((await b.QueueAsync()).Message);
 
+        var viewA = await a.StateAsync();
+        var viewB = await b.StateAsync();
+
+        // Both clients receive the same match creation; wait for the first board on each.
+        var pendingA = aUpdates.Reader.ReadAsync().AsTask();
+        var pendingB = bUpdates.Reader.ReadAsync().AsTask();
+        var done = await Task.WhenAny(pendingA, pendingB);
+        var board = done == pendingA ? await pendingA : await pendingB;
+
         var deadline = DateTime.UtcNow.AddSeconds(30);
-        MatchView? last = null;
         while (DateTime.UtcNow < deadline)
         {
-            var va = await a.StateAsync();
-            var vb = await b.StateAsync();
-            if (va.Status is MatchStatus.Won or MatchStatus.Draw)
+            Console.WriteLine(BoardText.Render(board.Board));
+            if (board.Status is MatchStatus.Won or MatchStatus.Draw)
             {
                 Console.WriteLine($"collection matches: A sees {a.Matches.Count} match, B sees {b.Matches.Count}");
-                Console.WriteLine("final:");
-                Console.WriteLine(BoardText.Render(va.Cells));
-                Console.WriteLine($"A({BoardText.Mark(va.MySymbol)}) result={Result(va)}");
-                Console.WriteLine($"B({BoardText.Mark(vb.MySymbol)}) result={Result(vb)}");
+                Console.WriteLine($"result: {board.Status}, winner={(board.Winner == 0 ? "-" : BoardText.Mark(board.Winner).ToString())}");
                 return;
             }
 
-            if (va.IsMyTurn)
+            if (board.Turn == viewA.MySymbol)
             {
-                var cell = PickCell(va);
+                var cell = PickCell(board.Board);
                 Console.WriteLine($"A move {cell}: {(await a.MoveAsync(cell)).Message}");
             }
-            else if (vb.IsMyTurn)
+            else if (board.Turn == viewB.MySymbol)
             {
-                var cell = PickCell(vb);
+                var cell = PickCell(board.Board);
                 Console.WriteLine($"B move {cell}: {(await b.MoveAsync(cell)).Message}");
             }
-            else if (va.Status == MatchStatus.Queued)
-            {
-                await Task.Delay(200);
-            }
 
-            last = va;
-            await Task.Delay(100);
+            // Wait for the next match update; no polling.
+            if (pendingA.IsCompleted) pendingA = aUpdates.Reader.ReadAsync().AsTask();
+            if (pendingB.IsCompleted) pendingB = bUpdates.Reader.ReadAsync().AsTask();
+            done = await Task.WhenAny(pendingA, pendingB);
+            board = done == pendingA ? await pendingA : await pendingB;
         }
 
         Console.WriteLine("bot game timed out");
-        if (last is not null) Console.WriteLine(BoardText.Render(last.Value.Cells));
+        Console.WriteLine(BoardText.Render(board.Board));
     }
 
-    private static string Result(MatchView view) =>
-        view.Winner == view.MySymbol ? "win" : view.Status == MatchStatus.Draw ? "draw" : "lose";
+    private static Channel<MatchBoard> Subscribe(TttClient client)
+    {
+        var channel = Channel.CreateUnbounded<MatchBoard>();
+        client.Matches.OnChanged(e =>
+        {
+            foreach (var change in e.Changes)
+                if (change.Kind != ChangeKind.Removed && change.Current is { } board)
+                    channel.Writer.TryWrite(board);
+        });
+        return channel;
+    }
 
-    private static int PickCell(MatchView view)
+    private static int PickCell(byte[] cells)
     {
         // center, then corners, then first free — enough to produce a legal full game.
         int[] order = { 4, 0, 2, 6, 8, 1, 3, 5, 7 };
         foreach (var cell in order)
         {
-            if (view.Cells[cell] == 0) return cell;
+            if (cells[cell] == 0) return cell;
         }
         return 0;
     }
