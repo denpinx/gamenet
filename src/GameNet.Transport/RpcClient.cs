@@ -46,16 +46,24 @@ public sealed class RpcClient : IDisposable
     private readonly TaskCompletionSource<string> _tokenTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource<bool> _resumeTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private string? _sessionToken;
+    private readonly TickClock _clock;
+    private long _lastClockMs;
     private Thread? _pump;
     private volatile bool _running;
     private uint _nextId;
 
-    internal RpcClient(ImpairmentOptions? impairment = null) => _transport = new UdpClientTransport(impairment);
+    internal RpcClient(ImpairmentOptions? impairment = null, double tickRate = 30)
+    {
+        _transport = new UdpClientTransport(impairment);
+        _clock = new TickClock(tickRate);
+        _lastClockMs = Environment.TickCount64;
+    }
 
     public int SessionId => _transport.Id;
     public bool IsBuilt => _built;
     public bool ManualTick => _manualTick;
     public string? SessionToken => _sessionToken;
+    public TickClock Clock => _clock;
 
     /// <summary>Replicated world for channels subscribed via <see cref="Subscribe"/>.</summary>
     public ClientWorld World { get; } = new();
@@ -130,6 +138,14 @@ public sealed class RpcClient : IDisposable
         return _transport.Send(1, writer.Written);
     }
 
+    private bool SendTickReport(uint tick)
+    {
+        var writer = new ByteWriter(8);
+        writer.WriteByte((byte)MessageType.TickReport);
+        writer.WriteUInt(tick);
+        return _transport.Send(1, writer.Written);
+    }
+
     internal bool SendResume(string token)
     {
         var writer = new ByteWriter(64);
@@ -164,6 +180,7 @@ public sealed class RpcClient : IDisposable
         if (!_transport.Connect(host, port, timeoutMs)) return false;
         _built = true;
         _manualTick = manualTick;
+        _lastClockMs = Environment.TickCount64;
         if (!manualTick)
         {
             _running = true;
@@ -180,6 +197,7 @@ public sealed class RpcClient : IDisposable
     public void Tick()
     {
         if (!_manualTick) throw new InvalidOperationException("client is not in manual-tick mode");
+        AdvanceClock();
         _transport.Poll();
         Drain();
     }
@@ -190,6 +208,7 @@ public sealed class RpcClient : IDisposable
         {
             try
             {
+                AdvanceClock();
                 _transport.Poll();
                 Drain();
             }
@@ -199,6 +218,13 @@ public sealed class RpcClient : IDisposable
             }
             Thread.Sleep(2);
         }
+    }
+
+    private void AdvanceClock()
+    {
+        var now = Environment.TickCount64;
+        _clock.Advance((now - _lastClockMs) / 1000.0);
+        _lastClockMs = now;
     }
 
     private void Drain()
@@ -231,6 +257,16 @@ public sealed class RpcClient : IDisposable
                     _collections[name] = reader.ReadByte();
                 }
                 ResolvePending();
+                continue;
+            }
+            if (messageType == MessageType.TickSync)
+            {
+                var serverTick = reader.ReadUInt();
+                var tolerance = reader.ReadUShort();
+                _ = reader.ReadUInt();
+                var local = _clock.CurrentTick;
+                _clock.Synchronize(serverTick, tolerance);
+                SendTickReport(local);
                 continue;
             }
             if (messageType == MessageType.SessionToken)

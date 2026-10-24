@@ -51,6 +51,8 @@ public sealed class Session
     public bool HasAvatar;
     public int VisibleCount { get; set; }
     public long SnapshotsSent { get; set; }
+    public uint ClientTick { get; set; }
+    public int TickDrift { get; set; }
 
     /// <summary>Per-collection delta baseline: collection id -> entity id -> last sent state.</summary>
     public readonly Dictionary<byte, Dictionary<int, EntityState>> Known = new();

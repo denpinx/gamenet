@@ -7,6 +7,12 @@ public sealed class ServerOptions
     public float ArenaSize { get; set; } = 200f;
     public bool AutoSubscribe { get; set; } = true;
 
+    /// <summary>Send an authoritative tick every N ticks; 0 disables tick sync.</summary>
+    public int TickSyncIntervalTicks { get; set; } = 60;
+
+    /// <summary>Client tick drift (in ticks) tolerated before snapping.</summary>
+    public int TickSyncTolerance { get; set; } = 2;
+
     /// <summary>How long a disconnected session keeps its token/subscriptions for resume.</summary>
     public double ResumeGraceSeconds { get; set; } = 30;
     public int MaxChunkPayload { get; set; } = SnapshotCodec.MaxChunkPayload;
@@ -54,6 +60,8 @@ public sealed class GameServer
     private readonly Dictionary<string, EntityCollection> _collectionsByName = new(StringComparer.OrdinalIgnoreCase);
     private byte _nextCollectionId = 1;
     private uint _version;
+
+    public uint CurrentTick => _version;
 
     public GameServer(IServerTransport transport, ServerOptions? options = null)
     {
@@ -302,8 +310,23 @@ public sealed class GameServer
 
         foreach (var hook in TickHooks) hook(deltaSeconds);
 
+        if (Options.TickSyncIntervalTicks > 0 && _version % (uint)Options.TickSyncIntervalTicks == 0)
+        {
+            foreach (var session in sessions) SendTickSync(session.Peer);
+        }
+
         var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
         Metrics.Record(elapsed, bytes);
+    }
+
+    private void SendTickSync(IPeer peer)
+    {
+        var writer = new ByteWriter(16);
+        writer.WriteByte((byte)MessageType.TickSync);
+        writer.WriteUInt(_version);
+        writer.WriteUShort((ushort)Options.TickSyncTolerance);
+        writer.WriteUInt((uint)Environment.TickCount64);
+        peer.Send(1, writer.Written);
     }
 
     private void ProcessInbound(Session session)
@@ -352,6 +375,15 @@ public sealed class GameServer
                     {
                         SendResumeResult(session.Peer, false, 0);
                     }
+                    break;
+                }
+
+                case MessageType.TickReport:
+                {
+                    var clientTick = reader.ReadUInt();
+                    session.ClientTick = clientTick;
+                    session.TickDrift = (int)(clientTick - _version);
+                    if (Math.Abs(session.TickDrift) > Options.TickSyncTolerance) SendTickSync(session.Peer);
                     break;
                 }
 

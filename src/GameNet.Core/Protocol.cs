@@ -19,6 +19,8 @@ public enum MessageType : byte
     SessionToken = 15,
     Resume = 16,
     ResumeResult = 17,
+    TickSync = 18,
+    TickReport = 19,
 }
 
 public enum EntityKind : byte

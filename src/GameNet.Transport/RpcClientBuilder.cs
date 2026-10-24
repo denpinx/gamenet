@@ -8,16 +8,31 @@ namespace GameNet.Transport;
 /// </summary>
 public sealed class RpcClientBuilder
 {
-    private readonly RpcClient _client;
+    private readonly ImpairmentOptions? _impairment;
     private readonly List<string> _subscriptions = new();
-    private bool _built;
+    private RpcClient? _client;
     private string? _resumeToken;
+    private double _tickRate;
+    private bool _built;
 
-    public RpcClientBuilder(ImpairmentOptions? impairment = null) => _client = new RpcClient(impairment);
+    public RpcClientBuilder(ImpairmentOptions? impairment = null, double tickRate = 30)
+    {
+        _impairment = impairment;
+        _tickRate = tickRate;
+    }
+
+    public RpcClientBuilder WithTickRate(double tickRate)
+    {
+        if (_client is not null) throw new InvalidOperationException("configure the tick rate before adding collections");
+        _tickRate = tickRate;
+        return this;
+    }
+
+    private RpcClient Client => _client ??= new RpcClient(_impairment, _tickRate);
 
     public RpcClientBuilder AddTypedCollection<T>(string name) where T : class, IEntityCodec<T>
     {
-        _client.RegisterTypedCollection<T>(name);
+        Client.RegisterTypedCollection<T>(name);
         return this;
     }
 
@@ -36,14 +51,15 @@ public sealed class RpcClientBuilder
     public RpcClient Build(string host, int port, int timeoutMs = 5000, bool manualTick = false)
     {
         if (_built) throw new InvalidOperationException("builder was already built");
-        foreach (var name in _subscriptions) _client.Subscribe(name);
-        if (!_client.Build(host, port, timeoutMs, manualTick))
+        var client = Client;
+        foreach (var name in _subscriptions) client.Subscribe(name);
+        if (!client.Build(host, port, timeoutMs, manualTick))
         {
-            _client.Dispose();
+            client.Dispose();
             throw new InvalidOperationException($"failed to connect to {host}:{port}");
         }
         _built = true;
-        if (_resumeToken is not null) _client.SendResume(_resumeToken);
-        return _client;
+        if (_resumeToken is not null) client.SendResume(_resumeToken);
+        return client;
     }
 }
