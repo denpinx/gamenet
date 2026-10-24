@@ -87,6 +87,27 @@ public class TypedCollectionTests
         Assert.Equal(20, view.Y, 3);
         Assert.True(reader.End);
     }
+    [Fact]
+    public async Task TypedCollection_InPlaceMutation_Replicates()
+    {
+        using var transport = new UdpServerTransport(0);
+        var server = new GameServer(transport, new ServerOptions { AutoSubscribe = false, AoiRadius = 0 });
+        var players = server.RegisterTypedCollection<PlayerEntity>("players");
+        var alice = new PlayerEntity { Id = 1, Name = "alice", X = 10, Y = 20 };
+        players.Spawn(1, alice);
+        server.Start();
+
+        using var client = new RpcClient();
+        var world = client.RegisterTypedCollection<PlayerView>("players");
+        Assert.True(client.Connect("127.0.0.1", transport.Port));
+        client.Subscribe("players");
+        await PumpUntilAsync(server, () => world.Count == 1);
+
+        alice.Name = "bob";
+        players.Spawn(1, alice);
+        await PumpUntilAsync(server, () => world.Entities[1].Name == "bob");
+        Assert.Equal("bob", world.Entities[1].Name);
+    }
     private static async Task PumpUntilAsync(GameServer server, Func<bool> condition, int timeoutMs = 6000)
     {
         var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);

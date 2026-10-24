@@ -31,9 +31,12 @@ public sealed class TttClient : IDisposable
         {
             _rpc = new RpcClientBuilder()
                 .AddTypedCollection<MatchBoard>("matches")
+                .AddTypedCollection<PlayerView>("players")
                 .Subscribe("matches")
+                .Subscribe("players")
                 .Build(host, port);
             Matches = _rpc.Typed<MatchBoard>("matches");
+            Players = _rpc.Typed<PlayerView>("players");
             return true;
         }
         catch (InvalidOperationException)
@@ -44,6 +47,8 @@ public sealed class TttClient : IDisposable
     }
 
     public TypedWorld<MatchBoard> Matches { get; private set; } = null!;
+    public TypedWorld<PlayerView> Players { get; private set; } = null!;
+    public PlayerView? Me => Players.Entities.Values.FirstOrDefault();
 
     public Task<bool> ReconnectAsync() =>
         _rpc is null ? Task.FromResult(false) : _rpc.ReconnectAsync(_host, _port);

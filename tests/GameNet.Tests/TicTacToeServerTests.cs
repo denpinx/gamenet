@@ -181,6 +181,43 @@ public class TicTacToeServerTests
             try { File.Delete(db); } catch { }
         }
     }
+    [Fact]
+    public async Task PlayerCollection_ReplicatesOnlyOwnSession()
+    {
+        var db = Path.Combine(Path.GetTempPath(), $"ttt-test-{Guid.NewGuid():N}.db");
+        try
+        {
+            using var server = new TttServer(db);
+            using var a = new TttClient();
+            using var b = new TttClient();
+            Assert.True(a.Connect("127.0.0.1", server.Port));
+            Assert.True(b.Connect("127.0.0.1", server.Port));
+
+            var suffix = Guid.NewGuid().ToString("N")[..8];
+            var userA = "alice" + suffix;
+            var userB = "bob" + suffix;
+            Assert.True((await a.RegisterAsync(userA, "pw-a")).Ok);
+            Assert.True((await b.RegisterAsync(userB, "pw-b")).Ok);
+            Assert.True((await a.LoginAsync(userA, "pw-a")).Ok);
+            Assert.True((await b.LoginAsync(userB, "pw-b")).Ok);
+
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (DateTime.UtcNow < deadline && (a.Me?.Name != userA || b.Me?.Name != userB)) await Task.Delay(20);
+
+            Assert.NotNull(a.Me);
+            Assert.NotNull(b.Me);
+            Assert.Equal(userA, a.Me!.Name);
+            Assert.Equal(userB, b.Me!.Name);
+            Assert.True(a.Me.Authenticated);
+            Assert.Single(a.Players.Entities);
+            Assert.Single(b.Players.Entities);
+            Assert.NotEqual(a.Me.Id, b.Me.Id);
+        }
+        finally
+        {
+            try { File.Delete(db); } catch { }
+        }
+    }
     private static int Pick(byte[] cells)
     {
         int[] order = { 4, 0, 2, 6, 8, 1, 3, 5, 7 };

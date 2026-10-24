@@ -202,7 +202,15 @@ public sealed class TypedCollection<T> : ITypedCollection where T : class, IEnti
         if (!delivered) return;
 
         known.Clear();
-        foreach (var (id, value) in visible) known[id] = value;
+        // Snapshot by value: server entities are mutable classes, so keeping the same
+        // reference would make an in-place edit look unchanged to the next diff.
+        foreach (var (id, value) in visible) known[id] = Snapshot(value);
+    }
+
+    private static T Snapshot(T value)
+    {
+        var reader = new ByteReader(EncodeFull(value));
+        return T.Read(ref reader);
     }
 
     private static byte[] EncodeFull(T value)

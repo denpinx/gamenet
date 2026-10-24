@@ -4,7 +4,7 @@
 
 > **关于实现方式：本项目由 vibe coding 完成。**
 >
-> 需求、技术选型、设计取舍和验收标准由人给出；文档、协议、实现、测试、基准和示例代码由 AI（DeepSeek）按对话迭代生成。代码经过 248 个测试、覆盖率门槛和多种网络条件的基准验证，但**没有经过生产环境审计**——上生产前请自行做代码审查、安全评估和压测。把它当作一个可运行、可讨论的参考实现，而不是可以直接出货的中间件。
+> 需求、技术选型、设计取舍和验收标准由人给出；文档、协议、实现、测试、基准和示例代码由 AI（DeepSeek）按对话迭代生成。代码经过 250 个测试、覆盖率门槛和多种网络条件的基准验证，但**没有经过生产环境审计**——上生产前请自行做代码审查、安全评估和压测。把它当作一个可运行、可讨论的参考实现，而不是可以直接出货的中间件。
 
 ## 从哪里开始
 
@@ -48,7 +48,7 @@
 pwsh -File scripts/run-all.ps1              # build + test + benchmark
 pwsh -File scripts/run-all.ps1 -SkipBench   # 只 build + test
 
-dotnet test tests/GameNet.Tests/GameNet.Tests.csproj          # 248 passed
+dotnet test tests/GameNet.Tests/GameNet.Tests.csproj          # 250 passed
 dotnet run --project src/GameNet.Demo.Minimal -c Release              # 最小示例：一个集合 + 一个 RPC 组
 dotnet run --project src/GameNet.Demo.TicTacToe -c Release -- --bot   # 井字棋：注册 + 匹配 + 对局
 dotnet run --project src/GameNet.Demo.Scenarios -c Release -- all     # 聊天室订阅 / 噪音集合 / 增量更新
@@ -96,13 +96,13 @@ src/GameNet.Persistence   代码优先 SQLite/MySQL schema、CRUD、Blob、自�
 src/GameNet.Generators    Roslyn 增量生成器（[Packet] → 编解码）
 src/GameNet.Benchmarks    多进程基准（服务端/客户端子进程）
 src/GameNet.Demo.*        最小示例、井字棋、场景（聊天/噪音/增量）
-tests/GameNet.Tests       248 个单元/集成/故障注入/协议兼容测试
+tests/GameNet.Tests       250 个单元/集成/故障注入/协议兼容测试
 scripts/run-all.ps1       build + test（含覆盖率门槛）+ benchmark
 ```
 
 ## 项目定位
 
-**alpha 级框架内核**：协议、传输、持久化、基准都已跑通并有测试；离「可直接上线」还差鉴权/TLS、自动重连退避、对局持久化、空间索引、带宽限速和跨机压测（重连 token/会话恢复已支持）。代码约 6 500 行，248 个测试。
+**alpha 级框架内核**：协议、传输、持久化、基准都已跑通并有测试；离「可直接上线」还差鉴权/TLS、自动重连退避、对局持久化、空间索引、带宽限速和跨机压测（重连 token/会话恢复已支持）。代码约 6 500 行，250 个测试。
 
 横向对比：远未达到 FishNet / Colyseus 的成熟度（多年迭代、文档、社区），但已经超过「玩具 demo」——它能承载一个完整产品闭环（见井字棋示例），并且每个性能数字都有可复现的基准。
 

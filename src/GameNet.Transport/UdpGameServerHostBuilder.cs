@@ -40,9 +40,15 @@ public sealed class UdpGameServerHostBuilder
         return this;
     }
 
-    public UdpGameServerHostBuilder AddTypedCollection<T>(string name) where T : class, IEntityCodec<T>
+    public UdpGameServerHostBuilder AddTypedCollection<T>(
+        string name,
+        Action<TypedCollection<T>>? configure = null) where T : class, IEntityCodec<T>
     {
-        _configure.Add(server => server.RegisterTypedCollection<T>(name));
+        _configure.Add(server =>
+        {
+            var collection = server.RegisterTypedCollection<T>(name);
+            configure?.Invoke(collection);
+        });
         return this;
     }
 

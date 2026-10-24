@@ -45,7 +45,7 @@ public sealed class TttServer : IDisposable
     private readonly GameServer _server;
     private readonly TypedCollection<MatchEntity> _matches;
     private readonly SqliteStore<UserRow> _users;
-    private readonly ConcurrentDictionary<int, Player> _players = new();
+    private readonly TypedCollection<PlayerEntity> _players;
     private readonly Queue<int> _queue = new();
     private readonly ConcurrentDictionary<int, Match> _bySession = new();
     private int _nextMatchId = 1;
@@ -54,17 +54,20 @@ public sealed class TttServer : IDisposable
     {
         _host = new UdpGameServerHostBuilder(port)
             .WithOptions(new ServerOptions { AutoSubscribe = false, AoiRadius = 0 })
-            .AddTypedCollection<MatchEntity>("matches")
+            .AddTypedCollection<MatchEntity>("matches", matches =>
+                matches.Filter = (session, match) => match.PlayerA == session.Id || match.PlayerB == session.Id)
+            .AddTypedCollection<PlayerEntity>("players", players =>
+                players.Filter = (session, player) => player.Id == session.Id)
             .Build();
         _server = _host.Server;
         _matches = _server.GetTypedCollection<MatchEntity>("matches");
-        _matches.Filter = (session, match) => match.PlayerA == session.Id || match.PlayerB == session.Id;
+        _players = _server.GetTypedCollection<PlayerEntity>("players");
         _users = new SqliteStore<UserRow>($"Data Source={databasePath}");
         _users.EnsureSchema();
 
         _server.RpcGroups.AddGroup(new TttApi(this));
 
-        _server.SessionJoined += session => _players[session.Id] = new Player();
+        _server.SessionJoined += session => _players.Spawn(session.Id, new PlayerEntity { Id = session.Id });
         _server.SessionLeft += OnDisconnected;
         _host.Start(autoTick: true, tickRate: 30);
     }
@@ -108,13 +111,13 @@ public sealed class TttServer : IDisposable
         var user = _users.Load(username);
         if (user is null || !Verify(password, user)) return new Ack(false, "用户名或密码错误");
 
-        if (!_players.TryGetValue(session.Id, out var player))
+        // Spawn a fresh object: the collection diffs against the last sent instance.
+        _players.Spawn(session.Id, new PlayerEntity
         {
-            player = new Player();
-            _players[session.Id] = player;
-        }
-        player.Name = user.Username;
-        player.Authenticated = true;
+            Id = session.Id,
+            Name = user.Username,
+            Authenticated = true,
+        });
         return new Ack(true, "登录成功");
     }
 
@@ -135,7 +138,7 @@ public sealed class TttServer : IDisposable
 
     internal QueueResult Queue(Session session)
     {
-        if (!_players.TryGetValue(session.Id, out var player) || !player.Authenticated)
+        if (!_players.TryGet(session.Id, out var player) || !player.Authenticated)
             return new QueueResult(MatchStatus.Idle, "请先登录");
 
         if (_bySession.TryGetValue(session.Id, out var existing))
@@ -148,7 +151,7 @@ public sealed class TttServer : IDisposable
         {
             var id = _queue.Dequeue();
             if (_bySession.ContainsKey(id)) continue;
-            if (!_players.TryGetValue(id, out var p) || !p.Authenticated) continue;
+            if (!_players.TryGet(id, out var p) || !p.Authenticated) continue;
             candidates.Add(id);
         }
 
@@ -175,7 +178,7 @@ public sealed class TttServer : IDisposable
 
         var game = match.Game;
         var opponentId = match.OpponentOf(session.Id);
-        var opponent = _players.TryGetValue(opponentId, out var p) ? p.Name : $"player{opponentId}";
+        var opponent = _players.TryGet(opponentId, out var p) ? p.Name : $"player{opponentId}";
         return new MatchView(game.Status, match.SymbolOf(session.Id), game.Turn, game.Winner,
             (byte[])game.Cells.Clone(), opponent, match.Id);
     }
@@ -192,7 +195,7 @@ public sealed class TttServer : IDisposable
     }
     private void OnDisconnected(Session session)
     {
-        _players.TryRemove(session.Id, out _);
+        _players.Despawn(session.Id);
         if (_bySession.TryRemove(session.Id, out var match))
         {
             var opponent = match.OpponentOf(session.Id);
@@ -204,9 +207,4 @@ public sealed class TttServer : IDisposable
 
     public void Dispose() => _host.Dispose();
 
-    private sealed class Player
-    {
-        public string Name = string.Empty;
-        public bool Authenticated;
-    }
 }
