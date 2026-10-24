@@ -8,6 +8,29 @@ namespace GameNet.Tests;
 public class TypedCollectionPersistenceTests
 {
     [Fact]
+    public void TypedCollection_SaveAtSpecificId()
+    {
+        var db = Path.Combine(Path.GetTempPath(), $"typed-{Guid.NewGuid():N}.db");
+        try
+        {
+            using var transport = new UdpServerTransport(0);
+            transport.Start();
+            var server = new GameServer(transport, new ServerOptions { AutoSubscribe = false, AoiRadius = 0 });
+            var players = server.RegisterTypedCollection<PlayerEntity>("players");
+            var store = players.UseSqlite($"Data Source={db}", autoPersist: false);
+
+            players.Save(3, new PlayerEntity { Id = 3, Name = "dave", X = 7 });
+
+            Assert.True(players.TryGet(3, out var dave));
+            Assert.Equal("dave", dave.Name);
+            Assert.Equal("dave", store.Load(3)!.Name);
+        }
+        finally
+        {
+            try { File.Delete(db); } catch { }
+        }
+    }
+    [Fact]
     public void TypedCollection_LoadWhere_ByProperty()
     {
         var db = Path.Combine(Path.GetTempPath(), $"typed-{Guid.NewGuid():N}.db");

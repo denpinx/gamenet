@@ -173,6 +173,14 @@ public sealed class TypedCollection<T> : ITypedCollection where T : class, IEnti
         PersistenceStore.Save(id, value);
     }
 
+    /// <summary>Writes (and inserts/replaces) the value at a specific entity id, regardless of autoPersist.</summary>
+    public void Save(int id, T value)
+    {
+        if (PersistenceStore is null) throw new InvalidOperationException($"collection {Name} has no persistence store");
+        _items[id] = value;
+        PersistenceStore.Save(id, value);
+    }
+
     public T? Load(int id)
     {
         if (PersistenceStore is null) throw new InvalidOperationException($"collection {Name} has no persistence store");
