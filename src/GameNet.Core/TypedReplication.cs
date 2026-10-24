@@ -357,6 +357,7 @@ public sealed class TypedWorld<TKey, T> : ITypedWorld
     public long ChunksApplied { get; private set; }
     public bool NeedsResync { get; private set; }
 
+    public T this[TKey key] => _entities[key];
     public T Get(TKey key) => _entities[key];
     public bool TryGet(TKey key, out T value) => _entities.TryGetValue(key, out value!);
 
