@@ -105,7 +105,6 @@ static async Task QueueAndPlayAsync(TttClient client)
 
 static async Task PlayAsync(TttClient client)
 {
-    client.Subscribe("matches"); // replicated match collection: filter shows only my match
     byte lastTurn = 255;
     var reportedCollection = false;
     while (true)
@@ -195,8 +194,6 @@ static async Task RunBotAsync()
 
     Console.WriteLine((await a.QueueAsync()).Message);
     Console.WriteLine((await b.QueueAsync()).Message);
-    a.Subscribe("matches");
-    b.Subscribe("matches");
 
     var deadline = DateTime.UtcNow.AddSeconds(30);
     MatchView? last = null;

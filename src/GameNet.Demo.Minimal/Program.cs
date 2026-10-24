@@ -53,18 +53,23 @@ static async Task RunClientAsync(string host, int port)
         return;
     }
 
+    var arrival = new TaskCompletionSource<PlayerView>(TaskCreationOptions.RunContinuationsAsynchronously);
+    using var subscription = players.OnChanged(e =>
+    {
+        foreach (var change in e.Changes)
+        {
+            if (change.Kind == ChangeKind.Added && change.Current is { } player)
+                arrival.TrySetResult(player);
+        }
+    });
+
     var id = await client.Group("hello").Call<int>("spawn", "alice");
     var greeting = await client.Group("hello").Call<string>("greet", "alice");
     Console.WriteLine($"rpc greet -> {greeting}");
     Console.WriteLine($"rpc spawn -> player {id}");
 
-    for (var i = 0; i < 100 && !players.Entities.ContainsKey(id); i++)
-        await Task.Delay(10);
-
-    if (players.Entities.TryGetValue(id, out var me))
-        Console.WriteLine($"typed collection 'players': id={me.Id} name={me.Name} pos=({me.X},{me.Y})");
-    else
-        Console.WriteLine("typed collection 'players': player did not arrive");
+    var me = await arrival.Task.WaitAsync(TimeSpan.FromSeconds(3));
+    Console.WriteLine($"[event] added player id={me.Id} name={me.Name} pos=({me.X},{me.Y})");
 }
 
 /// <summary>The whole server: one transport, one typed collection, one RPC group.</summary>

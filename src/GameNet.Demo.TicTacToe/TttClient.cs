@@ -24,6 +24,7 @@ public sealed class TttClient : IDisposable
     public bool Connect(string host, int port)
     {
         Matches = _rpc.RegisterTypedCollection<MatchBoard>("matches");
+        _rpc.Subscribe("matches");   // queued before Build, resolved by the server registry
         return _rpc.Build(host, port);
     }
 
