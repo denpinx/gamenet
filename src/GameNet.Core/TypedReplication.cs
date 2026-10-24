@@ -184,6 +184,20 @@ public sealed class TypedCollection<T> : ITypedCollection where T : class, IEnti
         return value;
     }
 
+    /// <summary>Loads matching rows and spawns them; useful for name/property lookups.</summary>
+    public IReadOnlyList<T> LoadWhere(Func<T, bool> predicate)
+    {
+        if (PersistenceStore is null) throw new InvalidOperationException($"collection {Name} has no persistence store");
+        var rows = PersistenceStore.Query(predicate);
+        _suppressPersist = true;
+        try
+        {
+            foreach (var (id, value) in rows) Spawn(id, value);
+        }
+        finally { _suppressPersist = false; }
+        return rows.Select(row => row.Value).ToList();
+    }
+
     public int LoadAll()
     {
         if (PersistenceStore is null) throw new InvalidOperationException($"collection {Name} has no persistence store");

@@ -11,4 +11,7 @@ public interface ITypedCollectionStore<T> where T : class
     T? Load(int id);
     bool Delete(int id);
     IReadOnlyList<(int Id, T Value)> LoadAll();
+
+    /// <summary>Returns matching rows (id + value). Implementations may filter in memory or SQL.</summary>
+    IReadOnlyList<(int Id, T Value)> Query(Func<T, bool> predicate);
 }

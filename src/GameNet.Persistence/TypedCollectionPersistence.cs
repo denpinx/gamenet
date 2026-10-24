@@ -31,6 +31,9 @@ public sealed class SqliteTypedCollectionStore<T> : ITypedCollectionStore<T> whe
     public IReadOnlyList<(int Id, T Value)> LoadAll() =>
         _store.LoadAll().Select(value => (_keyOf(value), value)).ToList();
 
+    public IReadOnlyList<(int Id, T Value)> Query(Func<T, bool> predicate) =>
+        _store.LoadAll().Where(predicate).Select(value => (_keyOf(value), value)).ToList();
+
     private static int DefaultKey(T item)
     {
         var properties = typeof(T).GetProperties(BindingFlags.Public | BindingFlags.Instance);
