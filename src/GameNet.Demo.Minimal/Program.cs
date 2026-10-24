@@ -85,10 +85,11 @@ public sealed class MinimalServer : IDisposable
 
     public MinimalServer(int port)
     {
-        _host = new UdpGameServerHost(port, new ServerOptions { AutoSubscribe = false, AoiRadius = 0 });
-        var players = _host.Server.RegisterTypedCollection<Player>("players");
-        _host.Server.RpcGroups.AddGroup(new HelloApi(players));
-        _host.Start(autoTick: true, tickRate: 30);
+        _host = new UdpGameServerHostBuilder(port)
+            .WithOptions(new ServerOptions { AutoSubscribe = false, AoiRadius = 0 })
+            .AddTypedCollection<Player>("players")
+            .AddRpcGroup(server => new HelloApi(server.GetTypedCollection<Player>("players")))
+            .Build(autoTick: true, tickRate: 30);
     }
 
     public int Port => _host.Port;

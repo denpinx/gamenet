@@ -38,22 +38,23 @@ public sealed class Match
 /// <summary>Turn-based demo server: SQLite accounts, matchmaking queue, RPC-only gameplay.</summary>
 public sealed class TttServer : IDisposable
 {
-    private readonly UdpServerTransport _transport;
+    private readonly UdpGameServerHost _host;
     private readonly GameServer _server;
     private readonly TypedCollection<MatchEntity> _matches;
     private readonly SqliteStore<UserRow> _users;
     private readonly ConcurrentDictionary<int, Player> _players = new();
     private readonly Queue<int> _queue = new();
     private readonly ConcurrentDictionary<int, Match> _bySession = new();
-    private readonly CancellationTokenSource _cts = new();
-    private readonly Thread _tick;
     private int _nextMatchId = 1;
 
     public TttServer(string databasePath)
     {
-        _transport = new UdpServerTransport(0);
-        _server = new GameServer(_transport, new ServerOptions { AutoSubscribe = false, AoiRadius = 0 });
-        _matches = _server.RegisterTypedCollection<MatchEntity>("matches");
+        _host = new UdpGameServerHostBuilder(0)
+            .WithOptions(new ServerOptions { AutoSubscribe = false, AoiRadius = 0 })
+            .AddTypedCollection<MatchEntity>("matches")
+            .Build();
+        _server = _host.Server;
+        _matches = _server.GetTypedCollection<MatchEntity>("matches");
         _matches.Filter = (session, match) => match.PlayerA == session.Id || match.PlayerB == session.Id;
         _users = new SqliteStore<UserRow>($"Data Source={databasePath}");
         _users.EnsureSchema();
@@ -66,10 +67,7 @@ public sealed class TttServer : IDisposable
 
         _server.SessionJoined += session => _players[session.Id] = new Player();
         _server.SessionLeft += OnDisconnected;
-        _server.Start();
-
-        _tick = new Thread(TickLoop) { IsBackground = true, Name = "ttt-tick" };
-        _tick.Start();
+        _host.Start(autoTick: true, tickRate: 30);
     }
 
     private static MatchEntity ToEntity(Match match) => new()
@@ -82,16 +80,9 @@ public sealed class TttServer : IDisposable
         Winner = match.Game.Winner,
         Board = (byte[])match.Game.Cells.Clone(),
     };
-    public int Port => _transport.Port;
+    public int Port => _host.Port;
 
-    private void TickLoop()
-    {
-        while (!_cts.IsCancellationRequested)
-        {
-            _server.Tick(1f / 30f);
-            Thread.Sleep(33);
-        }
-    }
+
 
     private static byte[] EncodeAck(bool ok, string message)
     {
@@ -243,12 +234,7 @@ public sealed class TttServer : IDisposable
         }
     }
 
-    public void Dispose()
-    {
-        _cts.Cancel();
-        try { _tick.Join(500); } catch { }
-        _transport.Dispose();
-    }
+    public void Dispose() => _host.Dispose();
 
     private sealed class Player
     {

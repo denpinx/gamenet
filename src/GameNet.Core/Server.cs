@@ -89,6 +89,13 @@ public sealed class GameServer
         return collection;
     }
 
+    public TypedCollection<T> GetTypedCollection<T>(string name) where T : class, IEntityCodec<T>
+    {
+        if (_collectionIds.TryGetValue(name, out var id) && _typedCollections.TryGetValue(id, out var collection))
+            return (TypedCollection<T>)collection;
+        throw new KeyNotFoundException($"typed collection '{name}' is not registered");
+    }
+
     /// <summary>Registers a collection created from the service provider (singleton lifetime).</summary>
     public EntityCollection RegisterCollection(string name, IServiceProvider services, Func<IServiceProvider, EntityCollection> factory)
         => RegisterCollection(name, factory(services));

@@ -15,11 +15,11 @@ public class ClientLifecycleTests
         players.Spawn(1, new PlayerEntity { Id = 1, Name = "alice", X = 7 });
         server.Start();
 
-        using var client = new RpcClient();
-        var world = client.RegisterTypedCollection<PlayerView>("players");
-        client.Subscribe("players");
-
-        Assert.True(client.Build("127.0.0.1", transport.Port, manualTick: true));
+        using var client = new RpcClientBuilder()
+            .AddTypedCollection<PlayerView>("players")
+            .Subscribe("players")
+            .Build("127.0.0.1", transport.Port, manualTick: true);
+        var world = client.Typed<PlayerView>("players");
         Assert.True(client.IsBuilt);
         Assert.True(client.ManualTick);
 
@@ -71,8 +71,7 @@ public class ClientLifecycleTests
         var server = new GameServer(transport, new ServerOptions { AutoSubscribe = false, AoiRadius = 0 });
         server.Start();
 
-        using var client = new RpcClient();
-        Assert.True(client.Build("127.0.0.1", transport.Port));
+        using var client = new RpcClientBuilder().Build("127.0.0.1", transport.Port);
         Assert.False(client.ManualTick);
         Assert.Throws<InvalidOperationException>(() => client.Tick());
     }

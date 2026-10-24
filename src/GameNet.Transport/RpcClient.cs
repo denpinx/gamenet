@@ -47,7 +47,7 @@ public sealed class RpcClient : IDisposable
     private volatile bool _running;
     private uint _nextId;
 
-    public RpcClient(ImpairmentOptions? impairment = null) => _transport = new UdpClientTransport(impairment);
+    internal RpcClient(ImpairmentOptions? impairment = null) => _transport = new UdpClientTransport(impairment);
 
     public int SessionId => _transport.Id;
     public bool IsBuilt => _built;
@@ -85,7 +85,7 @@ public sealed class RpcClient : IDisposable
     /// Registers a typed world before Build. After Build this throws: collection types are frozen,
     /// just like subscriptions are resolved from the server registry at handshake time.
     /// </summary>
-    public TypedWorld<T> RegisterTypedCollection<T>(string name) where T : class, IEntityCodec<T>
+    internal TypedWorld<T> RegisterTypedCollection<T>(string name) where T : class, IEntityCodec<T>
     {
         if (_built) throw new InvalidOperationException("client is built; register collections before Build()");
         var world = new TypedWorld<T>(0);
@@ -130,7 +130,7 @@ public sealed class RpcClient : IDisposable
     /// Connects and freezes the client configuration. Register typed collections and subscriptions
     /// before calling Build; afterwards only Subscribe/Unsubscribe and calls are allowed.
     /// </summary>
-    public bool Build(string host, int port, int timeoutMs = 5000, bool manualTick = false)
+    internal bool Build(string host, int port, int timeoutMs = 5000, bool manualTick = false)
     {
         if (_built) throw new InvalidOperationException("client is already built");
         if (!_transport.Connect(host, port, timeoutMs)) return false;
@@ -146,7 +146,7 @@ public sealed class RpcClient : IDisposable
     }
 
     /// <summary>Compatibility wrapper around Build with the background pump enabled.</summary>
-    public bool Connect(string host, int port, int timeoutMs = 5000) => Build(host, port, timeoutMs);
+    internal bool Connect(string host, int port, int timeoutMs = 5000) => Build(host, port, timeoutMs);
 
     /// <summary>Manual mode only: poll the socket, dispatch responses and apply received chunks.</summary>
     public void Tick()
