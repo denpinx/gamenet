@@ -94,20 +94,25 @@ public sealed class GameServer
     }
 
     /// <summary>Registers a typed entity collection; T's codec is generated from [Entity].</summary>
-    public TypedCollection<T> RegisterTypedCollection<T>(string name) where T : class, IEntityCodec<T>
+    public TypedCollection<TKey, T> RegisterTypedCollection<TKey, T>(
+        string name, ITypedKeyCodec<TKey>? keyCodec = null)
+        where TKey : notnull
+        where T : class, IEntityCodec<T>
     {
         if (_collectionIds.ContainsKey(name)) throw new InvalidOperationException($"collection '{name}' is already registered");
         var id = _nextCollectionId++;
         _collectionIds[name] = id;
-        var collection = new TypedCollection<T>(id, name);
+        var collection = new TypedCollection<TKey, T>(id, name, keyCodec ?? TypedKeyCodecs.Get<TKey>());
         _typedCollections[id] = collection;
         return collection;
     }
 
-    public TypedCollection<T> GetTypedCollection<T>(string name) where T : class, IEntityCodec<T>
+    public TypedCollection<TKey, T> GetTypedCollection<TKey, T>(string name)
+        where TKey : notnull
+        where T : class, IEntityCodec<T>
     {
         if (_collectionIds.TryGetValue(name, out var id) && _typedCollections.TryGetValue(id, out var collection))
-            return (TypedCollection<T>)collection;
+            return (TypedCollection<TKey, T>)collection;
         throw new KeyNotFoundException($"typed collection '{name}' is not registered");
     }
 
@@ -236,6 +241,10 @@ public sealed class GameServer
             writer.WriteVarUInt((uint)bytes.Length);
             writer.WriteBytes(bytes);
             writer.WriteByte(pair.Value);
+            var codecId = _typedCollections.TryGetValue(pair.Value, out var typed) ? typed.KeyCodecId : string.Empty;
+            var codecBytes = System.Text.Encoding.UTF8.GetBytes(codecId);
+            writer.WriteVarUInt((uint)codecBytes.Length);
+            writer.WriteBytes(codecBytes);
         }
         peer.Send(1, writer.Written);
     }

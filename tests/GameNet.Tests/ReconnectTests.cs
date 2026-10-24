@@ -16,16 +16,16 @@ public class ReconnectTests
             AoiRadius = 0,
             ResumeGraceSeconds = 5,
         });
-        var players = server.RegisterTypedCollection<PlayerEntity>("players");
+        var players = server.RegisterTypedCollection<int, PlayerEntity>("players");
         players.Spawn(1, new PlayerEntity { Id = 1, Name = "alice", X = 3 });
         server.Start(autoTick: true, tickRate: 60);
         try
         {
         using var first = new RpcClientBuilder()
-            .AddTypedCollection<PlayerView>("players")
+            .AddTypedCollection<int, PlayerView>("players")
             .Subscribe("players")
             .Build("127.0.0.1", transport.Port);
-        var firstWorld = first.Typed<PlayerView>("players");
+        var firstWorld = first.Typed<int, PlayerView>("players");
         var token = await first.WaitForSessionTokenAsync();
         var initialSession = server.Sessions.Values.Single().Id;
         await PumpUntilAsync(server, () => firstWorld.Count == 1);
@@ -34,13 +34,13 @@ public class ReconnectTests
         await PumpUntilAsync(server, () => server.Sessions.Count == 0); // peer gone, session suspended
 
         using var second = new RpcClientBuilder()
-            .AddTypedCollection<PlayerView>("players")
+            .AddTypedCollection<int, PlayerView>("players")
             .Subscribe("players")
             .WithResumeToken(token)
             .Build("127.0.0.1", transport.Port);
 
         Assert.True(await second.WaitForResumeAsync(8000));
-        var secondWorld = second.Typed<PlayerView>("players");
+        var secondWorld = second.Typed<int, PlayerView>("players");
         await PumpUntilAsync(server, () => secondWorld.Count == 1);
         Assert.Equal("alice", secondWorld.Entities[1].Name);
         Assert.Equal(initialSession, server.Sessions.Values.Single().Id);
@@ -58,17 +58,17 @@ public class ReconnectTests
             AoiRadius = 0,
             ResumeGraceSeconds = 5,
         });
-        var players = server.RegisterTypedCollection<PlayerEntity>("players");
+        var players = server.RegisterTypedCollection<int, PlayerEntity>("players");
         players.Spawn(1, new PlayerEntity { Id = 1, Name = "alice", X = 4 });
         server.Start(autoTick: true, tickRate: 60);
         try
         {
             using var client = new RpcClientBuilder()
-                .AddTypedCollection<PlayerView>("players")
+                .AddTypedCollection<int, PlayerView>("players")
                 .Subscribe("players")
                 .Build("127.0.0.1", transport.Port);
 
-            var world = client.Typed<PlayerView>("players");
+            var world = client.Typed<int, PlayerView>("players");
             var token = await client.WaitForSessionTokenAsync();
             var sessionId = server.Sessions.Values.Single().Id;
             await PumpUntilAsync(server, () => world.Count == 1);

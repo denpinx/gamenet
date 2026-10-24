@@ -11,15 +11,15 @@ public class ClientLifecycleTests
     {
         using var transport = new UdpServerTransport(0);
         var server = new GameServer(transport, new ServerOptions { AutoSubscribe = false, AoiRadius = 0 });
-        var players = server.RegisterTypedCollection<PlayerEntity>("players");
+        var players = server.RegisterTypedCollection<int, PlayerEntity>("players");
         players.Spawn(1, new PlayerEntity { Id = 1, Name = "alice", X = 7 });
         server.Start();
 
         using var client = new RpcClientBuilder()
-            .AddTypedCollection<PlayerView>("players")
+            .AddTypedCollection<int, PlayerView>("players")
             .Subscribe("players")
             .Build("127.0.0.1", transport.Port, manualTick: true);
-        var world = client.Typed<PlayerView>("players");
+        var world = client.Typed<int, PlayerView>("players");
         Assert.True(client.IsBuilt);
         Assert.True(client.ManualTick);
 
@@ -35,7 +35,7 @@ public class ClientLifecycleTests
         Assert.Equal("alice", world.Entities[1].Name);
 
         // Build freezes the collection surface.
-        Assert.Throws<InvalidOperationException>(() => client.RegisterTypedCollection<PlayerView>("other"));
+        Assert.Throws<InvalidOperationException>(() => client.RegisterTypedCollection<int, PlayerView>("other"));
         Assert.Throws<InvalidOperationException>(() => client.Build("127.0.0.1", transport.Port));
     }
 
@@ -44,16 +44,16 @@ public class ClientLifecycleTests
     {
         using var transport = new UdpServerTransport(0);
         var server = new GameServer(transport, new ServerOptions { AutoSubscribe = false, AoiRadius = 0 });
-        var players = server.RegisterTypedCollection<PlayerEntity>("players");
+        var players = server.RegisterTypedCollection<int, PlayerEntity>("players");
         players.Spawn(1, new PlayerEntity { Id = 1, Name = "alice" });
         server.Start();
 
         using var client = new RpcClientBuilder()
-            .AddTypedCollection<PlayerView>("players")
+            .AddTypedCollection<int, PlayerView>("players")
             .Subscribe("players")
             .Build("127.0.0.1", transport.Port, manualTick: true);
 
-        var world = client.Typed<PlayerView>("players");
+        var world = client.Typed<int, PlayerView>("players");
         var deadline = DateTime.UtcNow.AddSeconds(6);
         while (DateTime.UtcNow < deadline && world.Count == 0)
         {

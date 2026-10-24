@@ -32,8 +32,8 @@ public sealed class TttServer : IDisposable
 {
     private readonly UdpGameServerHost _host;
     private readonly GameServer _server;
-    private readonly TypedCollection<MatchEntity> _matches;
-    private readonly TypedCollection<PlayerEntity> _players;
+    private readonly TypedCollection<int, MatchEntity> _matches;
+    private readonly TypedCollection<string, PlayerEntity> _players;
     private readonly SqliteStore<UserRow> _users;
     private readonly Queue<int> _queue = new();
     private readonly ConcurrentDictionary<int, Match> _bySession = new();
@@ -49,13 +49,13 @@ public sealed class TttServer : IDisposable
 
         _host = new UdpGameServerHostBuilder(port)
             .WithOptions(new ServerOptions { AutoSubscribe = false, AoiRadius = 0 })
-            .AddTypedCollection<MatchEntity>("matches", matches =>
+            .AddTypedCollection<int, MatchEntity>("matches", matches =>
             {
                 matches.Filter = (session, match) => match.PlayerA == session.Id || match.PlayerB == session.Id;
                 matches.UseSqlite(connectionString);
                 matches.OnTick = _ => CheckTimeouts();
             })
-            .AddTypedCollection<PlayerEntity>("players", players =>
+            .AddTypedCollection<string, PlayerEntity>("players", players =>
             {
                 players.Filter = (session, player) =>
                     _names.TryGetValue(session.Id, out var name) && string.Equals(name, player.Name, StringComparison.Ordinal);
@@ -64,8 +64,8 @@ public sealed class TttServer : IDisposable
             .Build();
 
         _server = _host.Server;
-        _matches = _server.GetTypedCollection<MatchEntity>("matches");
-        _players = _server.GetTypedCollection<PlayerEntity>("players");
+        _matches = _server.GetTypedCollection<int, MatchEntity>("matches");
+        _players = _server.GetTypedCollection<string, PlayerEntity>("players");
         _users = new SqliteStore<UserRow>(connectionString);
         _users.EnsureSchema();
 

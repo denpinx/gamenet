@@ -46,7 +46,8 @@ public sealed class RpcClient : IDisposable
     private readonly ConcurrentDictionary<uint, TaskCompletionSource<RpcReply>> _pending = new();
     private readonly ConcurrentDictionary<string, byte> _collections = new();
     private readonly ConcurrentDictionary<byte, ITypedWorld> _typedWorlds = new();
-    private readonly List<(string Name, ITypedWorld World)> _pendingTyped = new();
+    private readonly List<(string Name, ITypedWorld World, string CodecId)> _pendingTyped = new();
+    private readonly Dictionary<string, string> _collectionCodecs = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _pendingSubscriptions = new(StringComparer.OrdinalIgnoreCase);
     private bool _built;
     private bool _manualTick;
@@ -72,6 +73,7 @@ public sealed class RpcClient : IDisposable
     public bool IsBuilt => _built;
     public bool ManualTick => _manualTick;
     public string? SessionToken => _sessionToken;
+    public string? LastRegistryError { get; private set; }
     public TickClock Clock => _clock;
 
     /// <summary>Replicated world for channels subscribed via <see cref="Subscribe"/>.</summary>
@@ -114,22 +116,26 @@ public sealed class RpcClient : IDisposable
     /// Registers a typed world before Build. After Build this throws: collection types are frozen,
     /// just like subscriptions are resolved from the server registry at handshake time.
     /// </summary>
-    internal TypedWorld<T> RegisterTypedCollection<T>(string name) where T : class, IEntityCodec<T>
+    internal TypedWorld<TKey, T> RegisterTypedCollection<TKey, T>(string name)
+        where TKey : notnull
+        where T : class, IEntityCodec<T>
     {
         if (_built) throw new InvalidOperationException("client is built; register collections before Build()");
-        var world = new TypedWorld<T>(0);
-        _pendingTyped.Add((name, world));
+        var world = new TypedWorld<TKey, T>(0, TypedKeyCodecs.Get<TKey>());
+        _pendingTyped.Add((name, world, world.KeyCodecId));
         return world;
     }
 
-    public TypedWorld<T> Typed<T>(string name) where T : class, IEntityCodec<T>
+    public TypedWorld<TKey, T> Typed<TKey, T>(string name)
+        where TKey : notnull
+        where T : class, IEntityCodec<T>
     {
         if (_collections.TryGetValue(name, out var id) && _typedWorlds.TryGetValue(id, out var world))
-            return (TypedWorld<T>)world;
+            return (TypedWorld<TKey, T>)world;
         foreach (var pending in _pendingTyped)
         {
             if (string.Equals(pending.Name, name, StringComparison.OrdinalIgnoreCase))
-                return (TypedWorld<T>)pending.World;
+                return (TypedWorld<TKey, T>)pending.World;
         }
         throw new KeyNotFoundException($"typed collection '{name}' is not registered");
     }
@@ -289,9 +295,9 @@ public sealed class RpcClient : IDisposable
             {
                 if (packet.Payload.Length > 0 && packet.Payload[0] == (byte)MessageType.TypedSnapshot)
                 {
-                    if (TypedSnapshotCodec.TryRead(packet.Payload, out var typedChunk) &&
-                        _typedWorlds.TryGetValue(typedChunk.Collection, out var typedWorld))
-                        typedWorld.Apply(typedChunk);
+                    var collectionId = packet.Payload[1];
+                    if (_typedWorlds.TryGetValue(collectionId, out var typedWorld))
+                        typedWorld.Apply(packet.Payload);
                 }
                 else if (SnapshotCodec.TryRead(packet.Payload, out var chunk))
                 {
@@ -308,7 +314,10 @@ public sealed class RpcClient : IDisposable
                 for (var i = 0; i < count; i++)
                 {
                     var name = System.Text.Encoding.UTF8.GetString(reader.ReadBytes((int)reader.ReadVarUInt()).ToArray());
-                    _collections[name] = reader.ReadByte();
+                    var collectionId = reader.ReadByte();
+                    var codecId = System.Text.Encoding.UTF8.GetString(reader.ReadBytes((int)reader.ReadVarUInt()).ToArray());
+                    _collections[name] = collectionId;
+                    _collectionCodecs[name] = codecId;
                 }
                 ResolvePending();
                 continue;
@@ -360,8 +369,15 @@ public sealed class RpcClient : IDisposable
     {
         for (var i = _pendingTyped.Count - 1; i >= 0; i--)
         {
-            var (name, world) = _pendingTyped[i];
+            var (name, world, codecId) = _pendingTyped[i];
             if (!_collections.TryGetValue(name, out var id)) continue;
+            if (_collectionCodecs.TryGetValue(name, out var serverCodec) &&
+                !string.Equals(serverCodec, codecId, StringComparison.Ordinal))
+            {
+                LastRegistryError = $"collection {name} uses key codec {serverCodec}, client registered {codecId}";
+                _pendingTyped.RemoveAt(i);
+                continue;
+            }
             world.Collection = id;
             _typedWorlds[id] = world;
             _pendingTyped.RemoveAt(i);

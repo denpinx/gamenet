@@ -2,18 +2,17 @@ namespace GameNet.Core;
 
 public enum ChangeKind
 {
-    Added,
-    Updated,
-    Removed,
+    Added = 0,
+    Updated = 1,
+    Removed = 2,
 }
 
-/// <summary>One applied change for the untyped EntityState world.</summary>
-public readonly struct EntityChange
+public sealed class EntityChange
 {
-    public TypedKey Id { get; init; }
+    public int Id { get; init; }
     public ChangeKind Kind { get; init; }
-    public EntityState Previous { get; init; }
-    public EntityState Current { get; init; }
+    public EntityState? Previous { get; init; }
+    public EntityState? Current { get; init; }
 }
 
 public sealed class CollectionChanged
@@ -23,20 +22,20 @@ public sealed class CollectionChanged
     public IReadOnlyList<EntityChange> Changes { get; init; } = Array.Empty<EntityChange>();
 }
 
-/// <summary>One applied change for a typed world. Previous is the old value for record views.</summary>
-public readonly struct TypedEntityChange<T>
+public readonly struct TypedEntityChange<TKey, T>
 {
-    public TypedKey Id { get; init; }
+    public TKey Id { get; init; }
     public ChangeKind Kind { get; init; }
     public T? Previous { get; init; }
     public T? Current { get; init; }
 }
 
-public sealed class TypedCollectionChanged<T>
+public sealed class TypedCollectionChanged<TKey, T>
 {
     public byte Collection { get; init; }
     public uint Version { get; init; }
-    public IReadOnlyList<TypedEntityChange<T>> Changes { get; init; } = Array.Empty<TypedEntityChange<T>>();
+    public IReadOnlyList<TypedEntityChange<TKey, T>> Changes { get; init; } =
+        Array.Empty<TypedEntityChange<TKey, T>>();
 }
 
 internal sealed class EventSubscription : IDisposable

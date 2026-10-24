@@ -36,7 +36,7 @@ public sealed class MatchSession : IDisposable
         }
     }
 
-    private void OnChanged(TypedCollectionChanged<MatchBoard> update)
+    private void OnChanged(TypedCollectionChanged<int, MatchBoard> update)
     {
         MatchBoard? latest = null;
         foreach (var change in update.Changes)

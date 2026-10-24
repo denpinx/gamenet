@@ -24,12 +24,12 @@ public class TypedCollectionTests
     {
         using var transport = new UdpServerTransport(0);
         var server = new GameServer(transport, new ServerOptions { AutoSubscribe = false, AoiRadius = 0 });
-        var players = server.RegisterTypedCollection<PlayerEntity>("players");
+        var players = server.RegisterTypedCollection<int, PlayerEntity>("players");
         players.Spawn(1, new PlayerEntity { Id = 1, Name = "alice", X = 10, Y = 20 });
         server.Start();
 
         using var client = new RpcClient();
-        var world = client.RegisterTypedCollection<PlayerView>("players");
+        var world = client.RegisterTypedCollection<int, PlayerView>("players");
         Assert.True(client.Connect("127.0.0.1", transport.Port));
         client.Subscribe("players");
 
@@ -53,14 +53,14 @@ public class TypedCollectionTests
     {
         using var transport = new UdpServerTransport(0);
         var server = new GameServer(transport, new ServerOptions { AutoSubscribe = false, AoiRadius = 0 });
-        var players = server.RegisterTypedCollection<PlayerEntity>("players");
+        var players = server.RegisterTypedCollection<int, PlayerEntity>("players");
         players.Filter = (session, player) => player.Id == session.Id;
         players.Spawn(1, new PlayerEntity { Id = 1, Name = "one" });
         players.Spawn(2, new PlayerEntity { Id = 2, Name = "two" });
         server.Start();
 
         using var client = new RpcClient();
-        var world = client.RegisterTypedCollection<PlayerView>("players");
+        var world = client.RegisterTypedCollection<int, PlayerView>("players");
         Assert.True(client.Connect("127.0.0.1", transport.Port));
         client.Subscribe("players");
 
@@ -92,12 +92,12 @@ public class TypedCollectionTests
     {
         using var transport = new UdpServerTransport(0);
         var server = new GameServer(transport, new ServerOptions { AutoSubscribe = false, AoiRadius = 0 });
-        var players = server.RegisterTypedCollection<PlayerEntity>("players");
+        var players = server.RegisterTypedCollection<string, PlayerEntity>("players");
         players.Spawn("alice", new PlayerEntity { Id = 1, Name = "alice", X = 1 });
         server.Start();
 
         using var client = new RpcClient();
-        var world = client.RegisterTypedCollection<PlayerView>("players");
+        var world = client.RegisterTypedCollection<string, PlayerView>("players");
         Assert.True(client.Connect("127.0.0.1", transport.Port));
         client.Subscribe("players");
 
@@ -117,13 +117,13 @@ public class TypedCollectionTests
     {
         using var transport = new UdpServerTransport(0);
         var server = new GameServer(transport, new ServerOptions { AutoSubscribe = false, AoiRadius = 0 });
-        var players = server.RegisterTypedCollection<PlayerEntity>("players");
+        var players = server.RegisterTypedCollection<int, PlayerEntity>("players");
         var alice = new PlayerEntity { Id = 1, Name = "alice", X = 10, Y = 20 };
         players.Spawn(1, alice);
         server.Start();
 
         using var client = new RpcClient();
-        var world = client.RegisterTypedCollection<PlayerView>("players");
+        var world = client.RegisterTypedCollection<int, PlayerView>("players");
         Assert.True(client.Connect("127.0.0.1", transport.Port));
         client.Subscribe("players");
         await PumpUntilAsync(server, () => world.Count == 1);

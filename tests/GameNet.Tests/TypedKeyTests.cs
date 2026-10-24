@@ -10,14 +10,18 @@ public class TypedKeyTests
 {
     static TypedKeyTests()
     {
-        TypedKeyRegistry.Register<Vec2I>(
-            "vec2i",
-            (writer, value) =>
-            {
-                writer.WriteVarInt(value.X);
-                writer.WriteVarInt(value.Y);
-            },
-            (ref ByteReader reader) => new Vec2I(reader.ReadVarInt(), reader.ReadVarInt()));
+        TypedKeyCodecs.Register(new Vec2ICodec());
+    }
+
+    private sealed class Vec2ICodec : ITypedKeyCodec<Vec2I>
+    {
+        public string Id => "vec2i";
+        public void Write(ByteWriter writer, Vec2I value)
+        {
+            writer.WriteVarInt(value.X);
+            writer.WriteVarInt(value.Y);
+        }
+        public Vec2I Read(ref ByteReader reader) => new(reader.ReadVarInt(), reader.ReadVarInt());
     }
 
     [Fact]
@@ -25,12 +29,12 @@ public class TypedKeyTests
     {
         using var transport = new UdpServerTransport(0);
         var server = new GameServer(transport, new ServerOptions { AutoSubscribe = false, AoiRadius = 0 });
-        var players = server.RegisterTypedCollection<PlayerEntity>("players");
+        var players = server.RegisterTypedCollection<Vec2I, PlayerEntity>("players");
         players.Spawn(new Vec2I(3, 4), new PlayerEntity { Id = 1, Name = "tile", X = 3, Y = 4 });
         server.Start();
 
         using var client = new RpcClient();
-        var world = client.RegisterTypedCollection<PlayerView>("players");
+        var world = client.RegisterTypedCollection<Vec2I, PlayerView>("players");
         Assert.True(client.Connect("127.0.0.1", transport.Port));
         client.Subscribe("players");
 

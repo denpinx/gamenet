@@ -46,7 +46,7 @@ static async Task RunClientAsync(string host, int port)
     try
     {
         client = new RpcClientBuilder()
-            .AddTypedCollection<PlayerView>("players")
+            .AddTypedCollection<int, PlayerView>("players")
             .Subscribe("players")
             .Build(host, port);
     }
@@ -57,7 +57,7 @@ static async Task RunClientAsync(string host, int port)
     }
 
     using var _ = client;
-    var players = client.Typed<PlayerView>("players");
+    var players = client.Typed<int, PlayerView>("players");
 
     var arrival = new TaskCompletionSource<PlayerView>(TaskCreationOptions.RunContinuationsAsynchronously);
     using var subscription = players.OnChanged(e =>
@@ -87,8 +87,8 @@ public sealed class MinimalServer : IDisposable
     {
         _host = new UdpGameServerHostBuilder(port)
             .WithOptions(new ServerOptions { AutoSubscribe = false, AoiRadius = 0 })
-            .AddTypedCollection<Player>("players")
-            .AddRpcGroup(server => new HelloApi(server.GetTypedCollection<Player>("players")))
+            .AddTypedCollection<int, Player>("players")
+            .AddRpcGroup(server => new HelloApi(server.GetTypedCollection<int, Player>("players")))
             .Build(autoTick: true, tickRate: 30);
     }
 
@@ -114,10 +114,10 @@ public sealed partial record PlayerView(int Id, string Name, float X, float Y);
 [RpcGroup("hello")]
 public sealed class HelloApi
 {
-    private readonly TypedCollection<Player> _players;
+    private readonly TypedCollection<int, Player> _players;
     private int _nextId;
 
-    public HelloApi(TypedCollection<Player> players) => _players = players;
+    public HelloApi(TypedCollection<int, Player> players) => _players = players;
 
     [Rpc]
     public string Greet(string name) => $"hello {name}";

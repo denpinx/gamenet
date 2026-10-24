@@ -22,7 +22,7 @@ public class TypedCollectionPersistenceTests
             using var transport = new UdpServerTransport(0);
             transport.Start();
             var server = new GameServer(transport, new ServerOptions { AutoSubscribe = false, AoiRadius = 0 });
-            var named = server.RegisterTypedCollection<NamedEntity>("named");
+            var named = server.RegisterTypedCollection<string, NamedEntity>("named");
             var store = named.UseSqlite($"Data Source={db}");
 
             named.Spawn("alice", new NamedEntity { Name = "alice", X = 1 });
@@ -50,10 +50,10 @@ public class TypedCollectionPersistenceTests
             using var transport = new UdpServerTransport(0);
             transport.Start();
             var server = new GameServer(transport, new ServerOptions { AutoSubscribe = false, AoiRadius = 0 });
-            var named = server.RegisterTypedCollection<NamedEntity>("named");
+            var named = server.RegisterTypedCollection<string, NamedEntity>("named");
             var store = named.UseSqlite($"Data Source={db}", autoPersist: false);
 
-            store.Store.Save(new NamedEntity { Name = "alice", X = 1 });
+            store.Save("alice", new NamedEntity { Name = "alice", X = 1 });
 
             var alice = named.LoadOrSpawn("alice", () => new NamedEntity { Name = "alice", X = 99 });
             Assert.Equal(1, alice.X); // loaded from the database, factory not used
@@ -80,7 +80,7 @@ public class TypedCollectionPersistenceTests
             using var transport = new UdpServerTransport(0);
             transport.Start();
             var server = new GameServer(transport, new ServerOptions { AutoSubscribe = false, AoiRadius = 0 });
-            var players = server.RegisterTypedCollection<PlayerEntity>("players");
+            var players = server.RegisterTypedCollection<int, PlayerEntity>("players");
             var store = players.UseSqlite($"Data Source={db}", autoPersist: false);
 
             players.Save(3, new PlayerEntity { Id = 3, Name = "dave", X = 7 });
@@ -103,11 +103,11 @@ public class TypedCollectionPersistenceTests
             using var transport = new UdpServerTransport(0);
             transport.Start();
             var server = new GameServer(transport, new ServerOptions { AutoSubscribe = false, AoiRadius = 0 });
-            var players = server.RegisterTypedCollection<PlayerEntity>("players");
+            var players = server.RegisterTypedCollection<int, PlayerEntity>("players");
             var store = players.UseSqlite($"Data Source={db}");
 
-            store.Store.Save(new PlayerEntity { Id = 1, Name = "alice", X = 1 });
-            store.Store.Save(new PlayerEntity { Id = 2, Name = "bob", X = 2 });
+            store.Save(1, new PlayerEntity { Id = 1, Name = "alice", X = 1 });
+            store.Save(2, new PlayerEntity { Id = 2, Name = "bob", X = 2 });
 
             var loaded = players.LoadWhere(player => player.Name == "alice");
             Assert.Single(loaded);
@@ -133,7 +133,7 @@ public class TypedCollectionPersistenceTests
             using var transport = new UdpServerTransport(0);
             transport.Start();
             var server = new GameServer(transport, new ServerOptions { AutoSubscribe = false, AoiRadius = 0 });
-            var players = server.RegisterTypedCollection<PlayerEntity>("players");
+            var players = server.RegisterTypedCollection<int, PlayerEntity>("players");
             var store = players.UseSqlite($"Data Source={db}");
 
             players.Spawn(1, new PlayerEntity { Id = 1, Name = "alice", X = 1 });
@@ -142,7 +142,7 @@ public class TypedCollectionPersistenceTests
             players.Spawn(1, new PlayerEntity { Id = 1, Name = "bob", X = 2 });
             Assert.Equal("bob", store.Load(1)!.Name);
 
-            store.Store.Save(new PlayerEntity { Id = 2, Name = "carol" });
+            store.Save(2, new PlayerEntity { Id = 2, Name = "carol" });
             Assert.Equal(2, players.LoadAll());
             Assert.True(players.TryGet(2, out var carol));
             Assert.Equal("carol", carol.Name);

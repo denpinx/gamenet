@@ -30,9 +30,11 @@ public sealed class RpcClientBuilder
 
     private RpcClient Client => _client ??= new RpcClient(_impairment, _tickRate);
 
-    public RpcClientBuilder AddTypedCollection<T>(string name) where T : class, IEntityCodec<T>
+    public RpcClientBuilder AddTypedCollection<TKey, T>(string name)
+        where TKey : notnull
+        where T : class, IEntityCodec<T>
     {
-        Client.RegisterTypedCollection<T>(name);
+        Client.RegisterTypedCollection<TKey, T>(name);
         return this;
     }
 
