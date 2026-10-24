@@ -50,9 +50,9 @@ public sealed class TttServer : IDisposable
     private readonly ConcurrentDictionary<int, Match> _bySession = new();
     private int _nextMatchId = 1;
 
-    public TttServer(string databasePath)
+    public TttServer(string databasePath, int port = 0)
     {
-        _host = new UdpGameServerHostBuilder(0)
+        _host = new UdpGameServerHostBuilder(port)
             .WithOptions(new ServerOptions { AutoSubscribe = false, AoiRadius = 0 })
             .AddTypedCollection<MatchEntity>("matches")
             .Build();
