@@ -78,6 +78,16 @@ public static class TypedSnapshotCodec
             case TypedKeyKind.Guid:
                 writer.WriteBytes(key.GuidValue.ToByteArray());
                 break;
+            case TypedKeyKind.Custom:
+            {
+                var id = System.Text.Encoding.UTF8.GetBytes(key.CodecId ?? string.Empty);
+                writer.WriteVarUInt((uint)id.Length);
+                writer.WriteBytes(id);
+                var data = key.Data ?? Array.Empty<byte>();
+                writer.WriteVarUInt((uint)data.Length);
+                writer.WriteBytes(data);
+                break;
+            }
             default:
                 writer.WriteVarInt(key.IntValue);
                 break;
@@ -87,13 +97,21 @@ public static class TypedSnapshotCodec
     private static TypedKey ReadKey(ref ByteReader reader)
     {
         var kind = (TypedKeyKind)reader.ReadByte();
-        return kind switch
+        switch (kind)
         {
-            TypedKeyKind.String => System.Text.Encoding.UTF8.GetString(
-                reader.ReadBytes((int)reader.ReadVarUInt()).ToArray()),
-            TypedKeyKind.Guid => new Guid(reader.ReadBytes(16)),
-            _ => reader.ReadVarInt(),
-        };
+            case TypedKeyKind.String:
+                return System.Text.Encoding.UTF8.GetString(reader.ReadBytes((int)reader.ReadVarUInt()).ToArray());
+            case TypedKeyKind.Guid:
+                return new Guid(reader.ReadBytes(16));
+            case TypedKeyKind.Custom:
+            {
+                var id = System.Text.Encoding.UTF8.GetString(reader.ReadBytes((int)reader.ReadVarUInt()).ToArray());
+                var data = reader.ReadBytes((int)reader.ReadVarUInt()).ToArray();
+                return TypedKey.Custom(id, data);
+            }
+            default:
+                return reader.ReadVarInt();
+        }
     }
 
     private static byte[] WriteChunk(byte collection, uint version, uint serverTimeMs, int index, int count, List<byte[]> entries)
@@ -186,11 +204,15 @@ public sealed class TypedCollection<T> : ITypedCollection where T : class, IEnti
         store.EnsureSchema();
     }
 
+    public void Spawn<TKey>(TKey key, T value) => Spawn(TypedKey.From(key), value);
+
     public void Spawn(TypedKey id, T value)
     {
         _items[id] = value;
         if (AutoPersist && !_suppressPersist) PersistenceStore?.Save(id, value);
     }
+
+    public bool Despawn<TKey>(TKey key) => Despawn(TypedKey.From(key));
 
     public bool Despawn(TypedKey id)
     {
@@ -207,12 +229,16 @@ public sealed class TypedCollection<T> : ITypedCollection where T : class, IEnti
     }
 
     /// <summary>Writes (and inserts/replaces) the value at a specific entity id, regardless of autoPersist.</summary>
+    public void Save<TKey>(TKey key, T value) => Save(TypedKey.From(key), value);
+
     public void Save(TypedKey id, T value)
     {
         if (PersistenceStore is null) throw new InvalidOperationException($"collection {Name} has no persistence store");
         _items[id] = value;
         PersistenceStore.Save(id, value);
     }
+
+    public T? Load<TKey>(TKey key) => Load(TypedKey.From(key));
 
     public T? Load(TypedKey id)
     {
@@ -226,6 +252,8 @@ public sealed class TypedCollection<T> : ITypedCollection where T : class, IEnti
     }
 
     /// <summary>Returns the in-memory entity, else loads it from the store, else creates and saves it.</summary>
+    public T LoadOrSpawn<TKey>(TKey key, Func<T> factory) => LoadOrSpawn(TypedKey.From(key), factory);
+
     public T LoadOrSpawn(TypedKey id, Func<T> factory)
     {
         if (PersistenceStore is null) throw new InvalidOperationException($"collection {Name} has no persistence store");
@@ -270,6 +298,8 @@ public sealed class TypedCollection<T> : ITypedCollection where T : class, IEnti
         finally { _suppressPersist = false; }
         return rows.Count;
     }
+    public bool TryGet<TKey>(TKey key, out T value) => TryGet(TypedKey.From(key), out value);
+
     public bool TryGet(TypedKey id, out T value) => _items.TryGetValue(id, out value!);
 
     public void Tick(double deltaSeconds) => OnTick?.Invoke(deltaSeconds);
@@ -372,6 +402,9 @@ public sealed class TypedWorld<T> : ITypedWorld where T : class, IEntityCodec<T>
     public byte Collection { get; set; }
     public IReadOnlyDictionary<TypedKey, T> Entities => _entities;
     public int Count => _entities.Count;
+
+    public T Get<TKey>(TKey key) => _entities[TypedKey.From(key)];
+    public bool TryGet<TKey>(TKey key, out T value) => _entities.TryGetValue(TypedKey.From(key), out value!);
     public long ChunksApplied { get; private set; }
     public bool NeedsResync { get; private set; }
 
