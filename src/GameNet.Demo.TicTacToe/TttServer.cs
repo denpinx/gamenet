@@ -20,45 +20,71 @@ public sealed class Match
     public int PlayerA { get; init; }
     public int PlayerB { get; init; }
     public TicTacToeGame Game { get; } = new();
+    public long LastMoveAt { get; set; } = Environment.TickCount64;
 
     public byte SymbolOf(int session) => session == PlayerA ? (byte)1 : (byte)2;
     public int OpponentOf(int session) => session == PlayerA ? PlayerB : PlayerA;
 }
 
-/// <summary>Turn-based demo server: SQLite accounts, matchmaking queue, RPC-only gameplay.</summary>
+/// <summary>Turn-based demo server: SQLite accounts/players/matches, matchmaking, RPC-only gameplay.</summary>
 [RpcGroup("ttt")]
 public sealed class TttServer : IDisposable
 {
     private readonly UdpGameServerHost _host;
     private readonly GameServer _server;
     private readonly TypedCollection<MatchEntity> _matches;
-    private readonly SqliteStore<UserRow> _users;
     private readonly TypedCollection<PlayerEntity> _players;
+    private readonly SqliteStore<UserRow> _users;
     private readonly Queue<int> _queue = new();
     private readonly ConcurrentDictionary<int, Match> _bySession = new();
+    private readonly ConcurrentDictionary<int, Match> _results = new();
+    private readonly ConcurrentDictionary<int, string> _names = new();
+    private readonly double _turnTimeoutSeconds;
     private int _nextMatchId = 1;
 
-    public TttServer(string databasePath, int port = 0)
+    public TttServer(string databasePath, int port = 0, double turnTimeoutSeconds = 30)
     {
+        _turnTimeoutSeconds = turnTimeoutSeconds;
+        var connectionString = $"Data Source={databasePath}";
+
         _host = new UdpGameServerHostBuilder(port)
             .WithOptions(new ServerOptions { AutoSubscribe = false, AoiRadius = 0 })
             .AddTypedCollection<MatchEntity>("matches", matches =>
-                matches.Filter = (session, match) => match.PlayerA == session.Id || match.PlayerB == session.Id)
+            {
+                matches.Filter = (session, match) => match.PlayerA == session.Id || match.PlayerB == session.Id;
+                matches.UseSqlite(connectionString);
+                matches.OnTick = _ => CheckTimeouts();
+            })
             .AddTypedCollection<PlayerEntity>("players", players =>
-                players.Filter = (session, player) => player.Id == session.Id)
+            {
+                players.Filter = (session, player) =>
+                    _names.TryGetValue(session.Id, out var name) && string.Equals(name, player.Name, StringComparison.Ordinal);
+                players.UseSqlite(connectionString);
+            })
             .Build();
+
         _server = _host.Server;
         _matches = _server.GetTypedCollection<MatchEntity>("matches");
         _players = _server.GetTypedCollection<PlayerEntity>("players");
-        _users = new SqliteStore<UserRow>($"Data Source={databasePath}");
+        _users = new SqliteStore<UserRow>(connectionString);
         _users.EnsureSchema();
 
-        _server.RpcGroups.AddGroup(this);
+        _matches.LoadAll();
+        var saved = _matches.Items.Values.ToList();
+        _nextMatchId = saved.Count == 0 ? 1 : saved.Max(match => match.Id) + 1;
+        // Matches from a previous process have no sessions; keep finished history, drop unfinished ones.
+        foreach (var match in saved.Where(match => match.Status == MatchStatus.Playing)) _matches.Despawn(match.Id);
+        _players.LoadAll();
 
-        _server.SessionJoined += session => _players.Spawn(session.Id, new PlayerEntity { Id = session.Id });
+        _server.RpcGroups.AddGroup(this);
         _server.SessionLeft += OnDisconnected;
         _host.Start(autoTick: true, tickRate: 30);
     }
+
+    public int Port => _host.Port;
+    public int SavedMatchCount => _matches.Count;
+    public int SavedPlayerCount => _players.Count;
+    public double TurnTimeoutSeconds => _turnTimeoutSeconds;
 
     private static MatchEntity ToEntity(Match match) => new()
     {
@@ -70,9 +96,6 @@ public sealed class TttServer : IDisposable
         Winner = match.Game.Winner,
         Board = (byte[])match.Game.Cells.Clone(),
     };
-    public int Port => _host.Port;
-
-
 
     [Rpc] public Ack Register(string username, string password)
     {
@@ -99,13 +122,12 @@ public sealed class TttServer : IDisposable
         var user = _users.Load(username);
         if (user is null || !Verify(password, user)) return new Ack(false, "用户名或密码错误");
 
-        // Spawn a fresh object: the collection diffs against the last sent instance.
-        _players.Spawn(session.Id, new PlayerEntity
-        {
-            Id = session.Id,
-            Name = user.Username,
-            Authenticated = true,
-        });
+        var player = _players.LoadOrSpawn(username, () => new PlayerEntity { Name = username });
+        player.Id = session.Id;
+        player.Name = username;
+        player.Authenticated = true;
+        _players.Spawn(username, player);
+        _names[session.Id] = username;
         return new Ack(true, "登录成功");
     }
 
@@ -126,9 +148,12 @@ public sealed class TttServer : IDisposable
 
     [Rpc] public QueueResult Queue(Session session)
     {
-        if (!_players.TryGet(session.Id, out var player) || !player.Authenticated)
+        if (!_names.TryGetValue(session.Id, out var name) ||
+            !_players.TryGet(name, out var player) ||
+            !player.Authenticated)
             return new QueueResult(MatchStatus.Idle, "请先登录");
 
+        _results.TryRemove(session.Id, out _);
         if (_bySession.TryGetValue(session.Id, out var existing))
             return new QueueResult(MatchStatus.Playing, $"对局 #{existing.Id}");
 
@@ -139,7 +164,8 @@ public sealed class TttServer : IDisposable
         {
             var id = _queue.Dequeue();
             if (_bySession.ContainsKey(id)) continue;
-            if (!_players.TryGet(id, out var p) || !p.Authenticated) continue;
+            if (!_names.TryGetValue(id, out var candidateName)) continue;
+            if (!_players.TryGet(candidateName, out var candidate) || !candidate.Authenticated) continue;
             candidates.Add(id);
         }
 
@@ -158,7 +184,8 @@ public sealed class TttServer : IDisposable
 
     [Rpc] public MatchView State(Session session)
     {
-        if (!_bySession.TryGetValue(session.Id, out var match))
+        if (!_bySession.TryGetValue(session.Id, out var match) &&
+            !_results.TryGetValue(session.Id, out match))
         {
             var status = _queue.Contains(session.Id) ? MatchStatus.Queued : MatchStatus.Idle;
             return new MatchView(status, 0, 0, 0, new byte[9], string.Empty, 0);
@@ -166,7 +193,7 @@ public sealed class TttServer : IDisposable
 
         var game = match.Game;
         var opponentId = match.OpponentOf(session.Id);
-        var opponent = _players.TryGet(opponentId, out var p) ? p.Name : $"player{opponentId}";
+        var opponent = _names.TryGetValue(opponentId, out var name) ? name : $"player{opponentId}";
         return new MatchView(game.Status, match.SymbolOf(session.Id), game.Turn, game.Winner,
             (byte[])game.Cells.Clone(), opponent, match.Id);
     }
@@ -178,21 +205,60 @@ public sealed class TttServer : IDisposable
 
         var symbol = match.SymbolOf(session.Id);
         var ok = match.Game.TryMove(symbol, cell, out var error);
-        if (ok) _matches.Spawn(match.Id, ToEntity(match));
+        if (ok)
+        {
+            match.LastMoveAt = Environment.TickCount64;
+            _matches.Spawn(match.Id, ToEntity(match));
+            if (match.Game.Status != MatchStatus.Playing) Finish(match);
+        }
         return new Ack(ok, ok ? "ok" : error);
     }
+
+    private void CheckTimeouts()
+    {
+        if (_turnTimeoutSeconds <= 0 || _bySession.IsEmpty) return;
+        var timeoutMs = (long)(_turnTimeoutSeconds * 1000);
+        var now = Environment.TickCount64;
+        var seen = new HashSet<int>();
+
+        foreach (var (sessionId, match) in _bySession)
+        {
+            if (!seen.Add(match.Id)) continue;
+            if (match.Game.Status != MatchStatus.Playing)
+            {
+                Finish(match);
+                continue;
+            }
+            if (now - match.LastMoveAt < timeoutMs) continue;
+
+            // The player whose turn it is loses on timeout; keep the final board in SQLite.
+            match.Game.Forfeit(match.Game.Turn);
+            _matches.Spawn(match.Id, ToEntity(match));
+            Finish(match);
+        }
+    }
+
+    private void Finish(Match match)
+    {
+        _bySession.TryRemove(match.PlayerA, out _);
+        _bySession.TryRemove(match.PlayerB, out _);
+        _results[match.PlayerA] = match;
+        _results[match.PlayerB] = match;
+    }
+
     private void OnDisconnected(Session session)
     {
-        _players.Despawn(session.Id);
+        _names.TryRemove(session.Id, out _);
+        _results.TryRemove(session.Id, out _);
         if (_bySession.TryRemove(session.Id, out var match))
         {
             var opponent = match.OpponentOf(session.Id);
             match.Game.Forfeit(match.SymbolOf(session.Id));
             _matches.Spawn(match.Id, ToEntity(match));
-            _bySession.TryRemove(opponent, out _);
+            Finish(match);
+            _results.TryRemove(session.Id, out _);
         }
     }
 
     public void Dispose() => _host.Dispose();
-
 }

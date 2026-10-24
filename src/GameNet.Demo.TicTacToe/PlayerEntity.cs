@@ -1,4 +1,5 @@
 using GameNet.Core;
+using GameNet.Persistence;
 
 namespace GameNet.Demo.TicTacToe;
 
@@ -7,6 +8,6 @@ namespace GameNet.Demo.TicTacToe;
 public sealed partial class PlayerEntity
 {
     public int Id { get; set; }
-    public string Name { get; set; } = string.Empty;
+    [Key] public string Name { get; set; } = string.Empty;
     public bool Authenticated { get; set; }
 }
